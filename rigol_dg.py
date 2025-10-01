@@ -84,6 +84,48 @@ class RigolDG:
         """
         self.instr.write(f"SOUR{channel}:FREQ {freq}")
 
+    def set_frequency_khz(self, channel, freq_khz):
+        """
+        Imposta la frequenza del segnale in kHz
+
+        Args:
+            channel: Numero canale (1 o 2)
+            freq_khz: Frequenza in kHz
+        """
+        freq_hz = freq_khz * 1000
+        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+
+    def set_frequency_mhz(self, channel, freq_mhz):
+        """
+        Imposta la frequenza del segnale in MHz
+
+        Args:
+            channel: Numero canale (1 o 2)
+            freq_mhz: Frequenza in MHz
+        """
+        freq_hz = freq_mhz * 1000000
+        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+
+    def set_frequency_with_unit(self, channel, value, unit):
+        """
+        Imposta la frequenza con unità specificata
+
+        Args:
+            channel: Numero canale (1 o 2)
+            value: Valore numerico della frequenza
+            unit: Unità di misura ('HZ', 'KHZ', 'MHZ')
+        """
+        if unit.upper() == 'HZ':
+            freq_hz = value
+        elif unit.upper() == 'KHZ':
+            freq_hz = value * 1000
+        elif unit.upper() == 'MHZ':
+            freq_hz = value * 1000000
+        else:
+            raise ValueError(f"Unità non supportata: {unit}. Usa 'HZ', 'KHZ', o 'MHZ'")
+
+        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+
     def set_amplitude(self, channel, ampl):
         """
         Imposta l'ampiezza del segnale
@@ -94,6 +136,43 @@ class RigolDG:
                   Range tipico: 1mVpp - 10Vpp (dipende dal carico)
         """
         self.instr.write(f"SOUR{channel}:VOLT {ampl}")
+
+    def set_amplitude_dbm(self, channel, dbm_value):
+        """
+        Imposta l'ampiezza del segnale in dBm (per carico 50Ω)
+
+        Args:
+            channel: Numero canale (1 o 2)
+            dbm_value: Potenza in dBm
+                      Range tipico: -40 dBm a +20 dBm (dipende dal modello)
+        """
+        self.instr.write(f"SOUR{channel}:VOLT:UNIT DBM")
+        self.instr.write(f"SOUR{channel}:VOLT {dbm_value}")
+
+    def set_amplitude_unit(self, channel, unit):
+        """
+        Imposta l'unità di misura per l'ampiezza
+
+        Args:
+            channel: Numero canale (1 o 2)
+            unit: Unità di misura
+                  'VPP' - Volt picco-picco
+                  'VRMS' - Volt RMS
+                  'DBM' - dBm (per carico 50Ω)
+        """
+        self.instr.write(f"SOUR{channel}:VOLT:UNIT {unit}")
+
+    def get_amplitude_unit(self, channel):
+        """
+        Ottiene l'unità di misura corrente per l'ampiezza
+
+        Args:
+            channel: Numero canale (1 o 2)
+
+        Returns:
+            str: Unità corrente ('VPP', 'VRMS', 'DBM')
+        """
+        return self.instr.query(f"SOUR{channel}:VOLT:UNIT?").strip()
 
     def set_offset(self, channel, offset):
         """
@@ -156,6 +235,18 @@ class RigolDG:
                   Il carico influenza l'ampiezza reale del segnale
         """
         self.instr.write(f"OUTP{channel}:LOAD {load}")
+
+    def set_50ohm_dbm_mode(self, channel):
+        """
+        Configura rapidamente il canale per misure RF:
+        - Impedenza di carico 50Ω
+        - Unità di ampiezza in dBm
+
+        Args:
+            channel: Numero canale (1 o 2)
+        """
+        self.set_output_load(channel, "50")
+        self.set_amplitude_unit(channel, "DBM")
 
     # === QUERY (LETTURA STATO) ===
 

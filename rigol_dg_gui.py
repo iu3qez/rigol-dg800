@@ -9,6 +9,171 @@ from tkinter import ttk, filedialog, messagebox
 import threading
 from rigol_dg import RigolDG
 import numpy as np
+import pyvisa as visa
+
+class DeviceSelectionDialog:
+    def __init__(self, parent):
+        self.result = None
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title("Selezione Dispositivo VISA")
+        self.dialog.geometry("600x400")
+        self.dialog.resizable(False, False)
+        self.dialog.grab_set()  # Finestra modale
+        self.dialog.transient(parent)
+
+        # Centra la finestra
+        self.dialog.geometry("+{}+{}".format(
+            parent.winfo_rootx() + 50,
+            parent.winfo_rooty() + 50
+        ))
+
+        self.setup_ui()
+        self.scan_devices()
+
+    def setup_ui(self):
+        # Frame principale
+        main_frame = ttk.Frame(self.dialog, padding=20)
+        main_frame.pack(fill="both", expand=True)
+
+        # Titolo
+        title_label = ttk.Label(main_frame, text="Seleziona Dispositivo VISA",
+                               font=("Arial", 12, "bold"))
+        title_label.pack(pady=(0, 20))
+
+        # Area di scansione
+        scan_frame = ttk.Frame(main_frame)
+        scan_frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Button(scan_frame, text="🔄 Rianalizza Dispositivi",
+                  command=self.scan_devices).pack(side="left")
+
+        self.scan_status = ttk.Label(scan_frame, text="")
+        self.scan_status.pack(side="left", padx=(10, 0))
+
+        # Lista dispositivi
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill="both", expand=True, pady=(0, 20))
+
+        ttk.Label(list_frame, text="Dispositivi trovati:").pack(anchor="w")
+
+        # Listbox con scrollbar
+        listbox_frame = ttk.Frame(list_frame)
+        listbox_frame.pack(fill="both", expand=True, pady=(5, 0))
+
+        self.device_listbox = tk.Listbox(listbox_frame, height=8, font=("Courier", 9))
+        scrollbar = ttk.Scrollbar(listbox_frame, orient="vertical", command=self.device_listbox.yview)
+        self.device_listbox.configure(yscrollcommand=scrollbar.set)
+
+        self.device_listbox.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # Frame info
+        info_frame = ttk.LabelFrame(main_frame, text="Informazioni Dispositivo", padding=10)
+        info_frame.pack(fill="x", pady=(0, 20))
+
+        self.device_info = tk.Text(info_frame, height=4, wrap="word", font=("Courier", 8))
+        self.device_info.pack(fill="x")
+
+        # Eventi
+        self.device_listbox.bind("<<ListboxSelect>>", self.on_device_select)
+        self.device_listbox.bind("<Double-Button-1>", lambda e: self.connect_device())
+
+        # Pulsanti
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x")
+
+        ttk.Button(button_frame, text="Annulla",
+                  command=self.cancel).pack(side="right", padx=(10, 0))
+        ttk.Button(button_frame, text="Connetti",
+                  command=self.connect_device).pack(side="right")
+
+        # Indirizzo manuale
+        manual_frame = ttk.LabelFrame(main_frame, text="Indirizzo Manuale", padding=10)
+        manual_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Label(manual_frame, text="Indirizzo VISA:").pack(side="left")
+        self.manual_entry = ttk.Entry(manual_frame, width=50)
+        self.manual_entry.pack(side="left", padx=(5, 0), fill="x", expand=True)
+        ttk.Button(manual_frame, text="Usa",
+                  command=self.use_manual).pack(side="left", padx=(5, 0))
+
+    def scan_devices(self):
+        self.scan_status.config(text="Scansione in corso...")
+        self.device_listbox.delete(0, tk.END)
+        self.device_info.delete(1.0, tk.END)
+        self.dialog.update()
+
+        try:
+            rm = visa.ResourceManager('@py')
+            resources = rm.list_resources()
+
+            if not resources:
+                self.device_listbox.insert(tk.END, "Nessun dispositivo VISA trovato")
+                self.scan_status.config(text="❌ Nessun dispositivo trovato")
+            else:
+                for i, res in enumerate(resources):
+                    self.device_listbox.insert(tk.END, f"{i}: {res}")
+                self.scan_status.config(text=f"✅ Trovati {len(resources)} dispositivi")
+
+            rm.close()
+        except Exception as e:
+            self.device_listbox.insert(tk.END, f"Errore di scansione: {str(e)}")
+            self.scan_status.config(text="❌ Errore scansione")
+
+    def on_device_select(self, event):
+        selection = self.device_listbox.curselection()
+        if not selection:
+            return
+
+        line = self.device_listbox.get(selection[0])
+        if ":" not in line or "Nessun" in line or "Errore" in line:
+            self.device_info.delete(1.0, tk.END)
+            return
+
+        # Estrae l'indirizzo VISA
+        resource_name = line.split(": ", 1)[1]
+
+        # Mostra informazioni del dispositivo
+        self.device_info.delete(1.0, tk.END)
+        self.device_info.insert(tk.END, f"Indirizzo: {resource_name}\n")
+
+        # Tenta di ottenere ID del dispositivo
+        try:
+            rm = visa.ResourceManager('@py')
+            instr = rm.open_resource(resource_name)
+            instr.timeout = 2000
+            idn = instr.query("*IDN?").strip()
+            self.device_info.insert(tk.END, f"Identificazione: {idn}")
+            instr.close()
+            rm.close()
+        except:
+            self.device_info.insert(tk.END, "Identificazione: Non disponibile")
+
+    def connect_device(self):
+        selection = self.device_listbox.curselection()
+        if not selection:
+            messagebox.showwarning("Attenzione", "Seleziona un dispositivo dalla lista")
+            return
+
+        line = self.device_listbox.get(selection[0])
+        if ":" not in line or "Nessun" in line or "Errore" in line:
+            messagebox.showwarning("Attenzione", "Seleziona un dispositivo valido")
+            return
+
+        self.result = line.split(": ", 1)[1]
+        self.dialog.destroy()
+
+    def use_manual(self):
+        address = self.manual_entry.get().strip()
+        if not address:
+            messagebox.showwarning("Attenzione", "Inserisci un indirizzo VISA valido")
+            return
+        self.result = address
+        self.dialog.destroy()
+
+    def cancel(self):
+        self.result = None
+        self.dialog.destroy()
 
 class RigolDGGUI:
     def __init__(self, root):
@@ -82,24 +247,46 @@ class RigolDGGUI:
         params_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
 
         # Frequenza
-        ttk.Label(params_frame, text="Frequenza (Hz):").grid(row=0, column=0, sticky="w")
+        freq_label = ttk.Label(params_frame, text="Frequenza (Hz):")
+        freq_label.grid(row=0, column=0, sticky="w")
+        setattr(self, f"ch{channel}_freq_label", freq_label)
+
         freq_var = tk.StringVar(value="1000")
         setattr(self, f"ch{channel}_freq", freq_var)
-        freq_entry = ttk.Entry(params_frame, textvariable=freq_var, width=20)
+        freq_entry = ttk.Entry(params_frame, textvariable=freq_var, width=15)
         freq_entry.grid(row=0, column=1, padx=5)
 
+        # Unità frequenza
+        freq_unit_var = tk.StringVar(value="HZ")
+        setattr(self, f"ch{channel}_freq_unit", freq_unit_var)
+        freq_unit_combo = ttk.Combobox(params_frame, textvariable=freq_unit_var, width=8,
+                                       values=["HZ", "KHZ", "MHZ"], state="readonly")
+        freq_unit_combo.grid(row=0, column=2, padx=2)
+        freq_unit_combo.bind("<<ComboboxSelected>>", lambda e: self.update_frequency_unit(channel))
+
         ttk.Button(params_frame, text="Applica",
-                  command=lambda: self.set_frequency(channel)).grid(row=0, column=2, padx=5)
+                  command=lambda: self.set_frequency(channel)).grid(row=0, column=3, padx=5)
 
         # Ampiezza
-        ttk.Label(params_frame, text="Ampiezza (Vpp):").grid(row=1, column=0, sticky="w")
+        ampl_label = ttk.Label(params_frame, text="Ampiezza (Vpp):")
+        ampl_label.grid(row=1, column=0, sticky="w")
+        setattr(self, f"ch{channel}_ampl_label", ampl_label)
+
         ampl_var = tk.StringVar(value="2")
         setattr(self, f"ch{channel}_ampl", ampl_var)
-        ampl_entry = ttk.Entry(params_frame, textvariable=ampl_var, width=20)
+        ampl_entry = ttk.Entry(params_frame, textvariable=ampl_var, width=15)
         ampl_entry.grid(row=1, column=1, padx=5)
 
+        # Unità ampiezza
+        unit_var = tk.StringVar(value="VPP")
+        setattr(self, f"ch{channel}_ampl_unit", unit_var)
+        unit_combo = ttk.Combobox(params_frame, textvariable=unit_var, width=8,
+                                  values=["VPP", "VRMS", "DBM"], state="readonly")
+        unit_combo.grid(row=1, column=2, padx=2)
+        unit_combo.bind("<<ComboboxSelected>>", lambda e: self.update_amplitude_unit(channel))
+
         ttk.Button(params_frame, text="Applica",
-                  command=lambda: self.set_amplitude(channel)).grid(row=1, column=2, padx=5)
+                  command=lambda: self.set_amplitude(channel)).grid(row=1, column=3, padx=5)
 
         # Offset
         ttk.Label(params_frame, text="Offset (V):").grid(row=2, column=0, sticky="w")
@@ -189,6 +376,13 @@ class RigolDGGUI:
                   command=lambda: self.output_on(channel)).pack(side="left", padx=5)
         ttk.Button(btn_frame, text="OUTPUT OFF",
                   command=lambda: self.output_off(channel)).pack(side="left", padx=5)
+
+        # Configurazione rapida RF
+        rf_frame = ttk.Frame(output_frame)
+        rf_frame.grid(row=2, column=0, columnspan=3, pady=10)
+
+        ttk.Button(rf_frame, text="⚡ Config RF (50Ω + dBm)",
+                  command=lambda: self.set_rf_mode(channel)).pack(side="left", padx=5)
 
         # === LETTURA STATO ===
         status_frame = ttk.LabelFrame(parent, text="Stato Corrente", padding=10)
@@ -288,19 +482,32 @@ class RigolDGGUI:
             messagebox.showinfo("Info", "Già connesso")
             return
 
+        visa_addr = self.visa_entry.get()
+
+        # Se è auto-detect, mostra dialog di selezione
+        if visa_addr == "Auto-detect" or visa_addr == "":
+            dialog = DeviceSelectionDialog(self.root)
+            self.root.wait_window(dialog.dialog)
+
+            if dialog.result is None:
+                return  # Utente ha annullato
+
+            visa_addr = dialog.result
+
         def do_connect():
             try:
-                visa_addr = self.visa_entry.get()
-                if visa_addr == "Auto-detect" or visa_addr == "":
-                    self.gen = RigolDG()
-                else:
-                    self.gen = RigolDG(visa_addr)
+                # Connette direttamente con l'indirizzo specificato
+                self.gen = RigolDG(visa_addr)
 
                 self.connected = True
                 self.root.after(0, lambda: self.status_label.config(
                     text=f"Connesso: {self.gen.identify()}", foreground="green"))
                 self.root.after(0, lambda: messagebox.showinfo(
                     "Successo", "Connesso al generatore"))
+
+                # Aggiorna il campo indirizzo con quello selezionato
+                self.root.after(0, lambda: self.visa_entry.delete(0, tk.END))
+                self.root.after(0, lambda: self.visa_entry.insert(0, visa_addr))
             except Exception as e:
                 self.root.after(0, lambda: messagebox.showerror(
                     "Errore", f"Errore di connessione:\n{str(e)}"))
@@ -329,26 +536,39 @@ class RigolDGGUI:
             messagebox.showerror("Errore", str(e))
 
     def set_frequency(self, channel):
-        """Imposta frequenza"""
+        """Imposta frequenza con unità corrente"""
         if not self.check_connection():
             return
 
         try:
-            freq = float(getattr(self, f"ch{channel}_freq").get())
-            self.gen.set_frequency(channel, freq)
-            messagebox.showinfo("OK", f"Canale {channel}: frequenza → {freq} Hz")
+            freq_value = float(getattr(self, f"ch{channel}_freq").get())
+            freq_unit = getattr(self, f"ch{channel}_freq_unit").get()
+
+            # Usa il metodo con unità
+            self.gen.set_frequency_with_unit(channel, freq_value, freq_unit)
+
+            # Messaggio con unità corretta
+            unit_str = {"HZ": "Hz", "KHZ": "kHz", "MHZ": "MHz"}[freq_unit]
+            messagebox.showinfo("OK", f"Canale {channel}: frequenza → {freq_value} {unit_str}")
         except Exception as e:
             messagebox.showerror("Errore", str(e))
 
     def set_amplitude(self, channel):
-        """Imposta ampiezza"""
+        """Imposta ampiezza con unità corrente"""
         if not self.check_connection():
             return
 
         try:
             ampl = float(getattr(self, f"ch{channel}_ampl").get())
+            unit = getattr(self, f"ch{channel}_ampl_unit").get()
+
+            # Imposta l'unità prima del valore
+            self.gen.set_amplitude_unit(channel, unit)
             self.gen.set_amplitude(channel, ampl)
-            messagebox.showinfo("OK", f"Canale {channel}: ampiezza → {ampl} Vpp")
+
+            # Messaggio con unità corretta
+            unit_str = {"VPP": "Vpp", "VRMS": "Vrms", "DBM": "dBm"}[unit]
+            messagebox.showinfo("OK", f"Canale {channel}: ampiezza → {ampl} {unit_str}")
         except Exception as e:
             messagebox.showerror("Errore", str(e))
 
@@ -385,6 +605,67 @@ class RigolDGGUI:
             duty = float(getattr(self, f"ch{channel}_duty").get())
             self.gen.set_duty_cycle(channel, duty)
             messagebox.showinfo("OK", f"Canale {channel}: duty cycle → {duty}%")
+        except Exception as e:
+            messagebox.showerror("Errore", str(e))
+
+    def update_amplitude_unit(self, channel):
+        """Aggiorna l'unità di ampiezza e l'etichetta"""
+        if not self.check_connection():
+            return
+
+        try:
+            unit = getattr(self, f"ch{channel}_ampl_unit").get()
+            self.gen.set_amplitude_unit(channel, unit)
+
+            # Aggiorna l'etichetta
+            label = getattr(self, f"ch{channel}_ampl_label")
+            if unit == "VPP":
+                label.config(text="Ampiezza (Vpp):")
+            elif unit == "VRMS":
+                label.config(text="Ampiezza (Vrms):")
+            elif unit == "DBM":
+                label.config(text="Potenza (dBm):")
+
+            messagebox.showinfo("OK", f"Canale {channel}: unità ampiezza → {unit}")
+        except Exception as e:
+            messagebox.showerror("Errore", str(e))
+
+    def update_frequency_unit(self, channel):
+        """Aggiorna l'unità di frequenza e l'etichetta"""
+        try:
+            unit = getattr(self, f"ch{channel}_freq_unit").get()
+
+            # Aggiorna l'etichetta
+            label = getattr(self, f"ch{channel}_freq_label")
+            if unit == "HZ":
+                label.config(text="Frequenza (Hz):")
+            elif unit == "KHZ":
+                label.config(text="Frequenza (kHz):")
+            elif unit == "MHZ":
+                label.config(text="Frequenza (MHz):")
+
+            messagebox.showinfo("OK", f"Canale {channel}: unità frequenza → {unit}")
+        except Exception as e:
+            messagebox.showerror("Errore", str(e))
+
+    def set_rf_mode(self, channel):
+        """Configura rapidamente per misure RF (50Ω + dBm)"""
+        if not self.check_connection():
+            return
+
+        try:
+            # Imposta carico 50Ω e unità dBm
+            self.gen.set_50ohm_dbm_mode(channel)
+
+            # Aggiorna i controlli GUI
+            getattr(self, f"ch{channel}_load").set("50")
+            getattr(self, f"ch{channel}_ampl_unit").set("DBM")
+
+            # Aggiorna l'etichetta ampiezza
+            label = getattr(self, f"ch{channel}_ampl_label")
+            label.config(text="Potenza (dBm):")
+
+            messagebox.showinfo("OK", f"Canale {channel}: configurato per RF (50Ω + dBm)")
         except Exception as e:
             messagebox.showerror("Errore", str(e))
 
@@ -470,17 +751,57 @@ class RigolDGGUI:
 
         try:
             func = self.gen.get_function(channel)
-            freq = self.gen.get_frequency(channel)
+            freq_hz = float(self.gen.get_frequency(channel))
             ampl = self.gen.get_amplitude(channel)
+            ampl_unit = self.gen.get_amplitude_unit(channel)
             is_on = self.gen.is_output_on(channel)
+
+            # Formatta frequenza nell'unità più appropriata
+            if freq_hz >= 1000000:
+                freq_display = f"{freq_hz/1000000:.3f} MHz"
+                best_unit = "MHZ"
+                best_value = freq_hz/1000000
+            elif freq_hz >= 1000:
+                freq_display = f"{freq_hz/1000:.3f} kHz"
+                best_unit = "KHZ"
+                best_value = freq_hz/1000
+            else:
+                freq_display = f"{freq_hz:.1f} Hz"
+                best_unit = "HZ"
+                best_value = freq_hz
 
             status_text = getattr(self, f"ch{channel}_status")
             status_text.delete(1.0, tk.END)
             status_text.insert(tk.END, f"=== CANALE {channel} ===\n\n")
             status_text.insert(tk.END, f"Forma d'onda: {func}\n")
-            status_text.insert(tk.END, f"Frequenza: {freq} Hz\n")
-            status_text.insert(tk.END, f"Ampiezza: {ampl} Vpp\n")
+            status_text.insert(tk.END, f"Frequenza: {freq_display}\n")
+
+            # Formatta unità ampiezza
+            unit_str = {"VPP": "Vpp", "VRMS": "Vrms", "DBM": "dBm"}.get(ampl_unit, ampl_unit)
+            status_text.insert(tk.END, f"Ampiezza: {ampl} {unit_str}\n")
             status_text.insert(tk.END, f"Output: {'ON' if is_on else 'OFF'}\n")
+
+            # Aggiorna anche i controlli GUI con i valori letti
+            getattr(self, f"ch{channel}_ampl_unit").set(ampl_unit)
+            getattr(self, f"ch{channel}_freq_unit").set(best_unit)
+            getattr(self, f"ch{channel}_freq").set(f"{best_value:.3f}" if best_unit != "HZ" else f"{best_value:.1f}")
+
+            # Aggiorna le etichette
+            ampl_label = getattr(self, f"ch{channel}_ampl_label")
+            if ampl_unit == "VPP":
+                ampl_label.config(text="Ampiezza (Vpp):")
+            elif ampl_unit == "VRMS":
+                ampl_label.config(text="Ampiezza (Vrms):")
+            elif ampl_unit == "DBM":
+                ampl_label.config(text="Potenza (dBm):")
+
+            freq_label = getattr(self, f"ch{channel}_freq_label")
+            if best_unit == "HZ":
+                freq_label.config(text="Frequenza (Hz):")
+            elif best_unit == "KHZ":
+                freq_label.config(text="Frequenza (kHz):")
+            elif best_unit == "MHZ":
+                freq_label.config(text="Frequenza (MHz):")
         except Exception as e:
             messagebox.showerror("Errore", str(e))
 
