@@ -1,106 +1,106 @@
 # Rigol DG800/DG900 Controller
 
-Libreria Python per il controllo remoto dei generatori di funzioni arbitrarie Rigol serie DG800 e DG900 tramite interfaccia VISA.
+Python library for remote control of Rigol DG800 and DG900 series arbitrary function generators via VISA interface.
 
-## Requisiti
+## Requirements
 
 ```bash
 pip install pyvisa pyvisa-py numpy
 ```
 
-## Connessione
+## Connection
 
-### Auto-rilevamento dispositivo
+### Auto-detect device
 ```python
 from rigol_dg import RigolDG
 
-gen = RigolDG()  # Mostra lista dispositivi disponibili
+gen = RigolDG()  # Shows list of available devices
 ```
 
-### Connessione diretta
+### Direct connection
 ```python
-# Connessione USB
+# USB connection
 gen = RigolDG('USB0::0x1AB1::0x0642::DG9A12345678::INSTR')
 
-# Connessione LAN
+# LAN connection
 gen = RigolDG('TCPIP0::192.168.1.100::INSTR')
 ```
 
-## Funzioni Base
+## Basic Functions
 
-### Forme d'onda standard
+### Standard waveforms
 ```python
-# Sinusoide 1 kHz, 2 Vpp
+# Sine wave 1 kHz, 2 Vpp
 gen.set_function(1, "SIN")
 gen.set_frequency(1, 1000)
 gen.set_amplitude(1, 2)
 gen.set_offset(1, 0)
 gen.output_on(1)
 
-# Onda quadra 50% duty cycle
+# Square wave 50% duty cycle
 gen.set_function(1, "SQU")
 gen.set_duty_cycle(1, 50)
 
-# Rampa triangolare
+# Triangular ramp
 gen.create_ramp(1, freq=100, symmetry=50)
 ```
 
-### Forme d'onda disponibili
-- `SIN` - Sinusoide
-- `SQU` - Onda quadra
-- `RAMP` - Rampa/triangolare
-- `PULSE` - Impulso
-- `NOIS` - Rumore
-- `ARB` - Arbitraria
-- `DC` - Continua
+### Available waveforms
+- `SIN` - Sine wave
+- `SQU` - Square wave
+- `RAMP` - Ramp/triangular
+- `PULSE` - Pulse
+- `NOIS` - Noise
+- `ARB` - Arbitrary
+- `DC` - DC
 
-## Modulazione
+## Modulation
 
-### Modulazione di Ampiezza (AM)
+### Amplitude Modulation (AM)
 ```python
 gen.set_am_modulation(1, depth=50, freq=100)
 ```
 
-### Modulazione di Frequenza (FM)
+### Frequency Modulation (FM)
 ```python
 gen.set_fm_modulation(1, deviation=1000, freq=10)
 ```
 
-### Disattiva modulazione
+### Disable modulation
 ```python
 gen.modulation_off(1)
 ```
 
-## Forme d'Onda Arbitrarie
+## Arbitrary Waveforms
 
-### Creazione da array Python
+### Create from Python array
 ```python
 import numpy as np
 
-# Crea forma d'onda sinc
+# Create sinc waveform
 t = np.linspace(-np.pi, np.pi, 1000)
 sinc_wave = np.sinc(t)
 gen.create_arb_waveform(1, sinc_wave.tolist(), name="SINC")
 gen.load_arb_waveform(1, "SINC")
 
-# Forma d'onda custom
+# Custom waveform
 data = [0, 0.5, 1.0, 0.5, 0, -0.5, -1.0, -0.5]
 gen.create_arb_waveform(1, data, name="CUSTOM")
 gen.set_arb_sample_rate(1, 1e6)  # 1 MSa/s
 ```
 
-### Caricamento da file CSV
+### Load from CSV file
 
 ```python
-# Carica con normalizzazione automatica
+# Load with automatic normalization
 num_points = gen.load_arb_from_csv(1, "waveform.csv", name="MY_WAVE")
-print(f"Caricati {num_points} punti")
+print(f"Loaded {num_points} points")
 gen.load_arb_waveform(1, "MY_WAVE")
 ```
 
-#### Formati CSV supportati
+#### Supported CSV formats
 
-**1. Una colonna (solo ampiezza)**
+**1. One column (amplitude only)**
 ```csv
 0.0
 0.309
@@ -109,7 +109,7 @@ gen.load_arb_waveform(1, "MY_WAVE")
 1.0
 ```
 
-**2. Due colonne (tempo, ampiezza)**
+**2. Two columns (time, amplitude)**
 ```csv
 0.000, 0.0
 0.001, 0.309
@@ -118,7 +118,7 @@ gen.load_arb_waveform(1, "MY_WAVE")
 0.004, 1.0
 ```
 
-**3. Con intestazione**
+**3. With header**
 ```csv
 time,voltage
 0.000, 0.0
@@ -126,84 +126,84 @@ time,voltage
 0.002, 0.588
 ```
 
-**Note:**
-- La normalizzazione automatica scala i valori tra -1 e +1
-- Numero massimo punti: 8k-16k (dipende dal modello)
-- Separatori supportati: virgola, punto e virgola
+**Notes:**
+- Automatic normalization scales values between -1 and +1
+- Maximum points: 8k-16k (depends on model)
+- Supported separators: comma, semicolon
 
-### Gestione forme d'onda salvate
+### Manage saved waveforms
 ```python
-# Lista forme d'onda in memoria
+# List waveforms in memory
 waveforms = gen.get_arb_list()
 print(waveforms)
 
-# Elimina forma d'onda
+# Delete waveform
 gen.delete_arb_waveform("OLD_WAVE")
 ```
 
-## Funzioni Avanzate
+## Advanced Functions
 
 ### Burst
 ```python
-# Burst di 10 cicli sinusoidali a 1 kHz
+# Burst of 10 sine cycles at 1 kHz
 gen.create_sine_burst(1, cycles=10, freq=1000, ampl=2)
 ```
 
-### Impulsi personalizzati
+### Custom pulses
 ```python
-# Impulso 1ms, periodo 10ms, edge time 10ns
+# 1ms pulse, 10ms period, 10ns edge time
 gen.create_custom_pulse(1, width=1e-3, period=10e-3, edge_time=10e-9)
 ```
 
-## Lettura Stato
+## Read Status
 
 ```python
-# Leggi parametri attuali
+# Read current parameters
 freq = gen.get_frequency(1)
 ampl = gen.get_amplitude(1)
 func = gen.get_function(1)
 is_on = gen.is_output_on(1)
 
-print(f"Frequenza: {freq} Hz")
-print(f"Ampiezza: {ampl} Vpp")
-print(f"Funzione: {func}")
+print(f"Frequency: {freq} Hz")
+print(f"Amplitude: {ampl} Vpp")
+print(f"Function: {func}")
 print(f"Output: {'ON' if is_on else 'OFF'}")
 ```
 
-## Configurazione Output
+## Output Configuration
 
 ```python
-# Imposta impedenza di carico
+# Set load impedance
 gen.set_output_load(1, 50)      # 50 Ω
-gen.set_output_load(1, 'INF')   # Alta impedenza
+gen.set_output_load(1, 'INF')   # High impedance
 ```
 
-## Unità di Misura
+## Units of Measurement
 
-| Parametro | Unità | Esempio |
-|-----------|-------|---------|
-| Frequenza | Hz | `1000` = 1 kHz |
-| Ampiezza | Vpp (Volt picco-picco) | `2` = 2 Vpp |
+| Parameter | Unit | Example |
+|-----------|------|---------|
+| Frequency | Hz | `1000` = 1 kHz |
+| Amplitude | Vpp (Volt peak-to-peak) | `2` = 2 Vpp |
 | Offset | V (Volt) | `0.5` = +0.5V DC |
-| Fase | Gradi | `90` = 90° |
+| Phase | Degrees | `90` = 90° |
 | Duty cycle | % | `50` = 50% |
-| Tempo | Secondi | `1e-3` = 1 ms |
+| Time | Seconds | `1e-3` = 1 ms |
 | Sample rate | Sa/s | `1e6` = 1 MSa/s |
-| Impedenza | Ω (Ohm) | `50` = 50Ω |
+| Impedance | Ω (Ohm) | `50` = 50Ω |
 
-## Esempio Completo
+## Complete Example
 
 ```python
 from rigol_dg import RigolDG
 
-# Connessione
+# Connection
 gen = RigolDG()
 
 try:
-    # Reset strumento
+    # Reset instrument
     gen.reset()
 
-    # Canale 1: Sinusoide 1 kHz modulata AM
+    # Channel 1: 1 kHz sine wave with AM modulation
     gen.set_function(1, "SIN")
     gen.set_frequency(1, 1000)
     gen.set_amplitude(1, 2)
@@ -211,37 +211,37 @@ try:
     gen.set_am_modulation(1, depth=50, freq=10)
     gen.output_on(1)
 
-    # Canale 2: Forma d'onda arbitraria da CSV
+    # Channel 2: Arbitrary waveform from CSV
     points = gen.load_arb_from_csv(2, "my_waveform.csv", name="CUSTOM")
     gen.load_arb_waveform(2, "CUSTOM")
     gen.set_arb_sample_rate(2, 1e6)
     gen.set_amplitude(2, 3)
     gen.output_on(2)
 
-    # Verifica configurazione
-    print(f"\nCanale 1: {gen.get_function(1)}, {gen.get_frequency(1)} Hz")
-    print(f"Canale 2: {gen.get_function(2)}, {points} punti caricati")
+    # Verify configuration
+    print(f"\nChannel 1: {gen.get_function(1)}, {gen.get_frequency(1)} Hz")
+    print(f"Channel 2: {gen.get_function(2)}, {points} points loaded")
 
-    input("\nPremi ENTER per terminare...")
+    input("\nPress ENTER to exit...")
 
 finally:
-    # Chiudi connessione
+    # Close connection
     gen.close()
 ```
 
-## Riferimenti
+## References
 
-- **Modelli supportati:** Rigol DG800, DG900, DG1000Z, DG4000, DG5000
-- **Protocollo:** SCPI (Standard Commands for Programmable Instruments)
-- **Interfacce:** USB, LAN (Ethernet), GPIB (con adattatore)
+- **Supported models:** Rigol DG800, DG900, DG1000Z, DG4000, DG5000
+- **Protocol:** SCPI (Standard Commands for Programmable Instruments)
+- **Interfaces:** USB, LAN (Ethernet), GPIB (with adapter)
 
-## Note
+## Notes
 
-- Chiamare sempre `gen.close()` alla fine della sessione
-- Le forme d'onda arbitrarie devono avere valori tra -1 e +1
-- Verificare i limiti del proprio modello (frequenza max, punti ARB, ecc.)
-- Per forme d'onda complesse, usare sample rate adeguato per evitare aliasing
+- Always call `gen.close()` at the end of the session
+- Arbitrary waveforms must have values between -1 and +1
+- Check your model's limits (max frequency, ARB points, etc.)
+- For complex waveforms, use adequate sample rate to avoid aliasing
 
-## Licenza
+## License
 
-Codice fornito "as-is" per uso educativo e di laboratorio.
+Code provided "as-is" for educational and laboratory use.

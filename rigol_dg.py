@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Controller per generatori Rigol DG800/DG900
-Richiede: pip install pyvisa pyvisa-py
+Controller for Rigol DG800/DG900 generators
+Requires: pip install pyvisa pyvisa-py
 """
 
 import pyvisa as visa
@@ -10,110 +10,110 @@ import numpy as np
 class RigolDG:
     def __init__(self, resource_name=None):
         """
-        Inizializza connessione al generatore Rigol DG800/DG900
+        Initialize connection to Rigol DG800/DG900 generator
 
         Args:
-            resource_name: Stringa identificativa VISA del dispositivo
-                          Es: 'USB0::0x1AB1::0x0642::DG9A12345678::INSTR'
-                          Es: 'TCPIP0::192.168.1.100::INSTR'
-                          Se None, mostra lista dispositivi disponibili
+            resource_name: VISA device identification string
+                          Ex: 'USB0::0x1AB1::0x0642::DG9A12345678::INSTR'
+                          Ex: 'TCPIP0::192.168.1.100::INSTR'
+                          If None, shows list of available devices
         """
-        # Inizializza ResourceManager VISA con backend PyVISA-py
+        # Initialize VISA ResourceManager with PyVISA-py backend
         self.rm = visa.ResourceManager('@py')
 
-        # Se non specificato, rileva automaticamente i dispositivi
+        # If not specified, auto-detect devices
         if resource_name is None:
             resources = self.rm.list_resources()
-            print("Dispositivi trovati:")
+            print("Devices found:")
             for i, res in enumerate(resources):
                 print(f"{i}: {res}")
 
             if not resources:
-                raise Exception("Nessun dispositivo VISA trovato")
+                raise Exception("No VISA devices found")
 
-            idx = int(input("Seleziona dispositivo (numero): "))
+            idx = int(input("Select device (number): "))
             resource_name = resources[idx]
 
-        # Apre connessione con timeout di 5 secondi
+        # Open connection with 5 second timeout
         self.instr = self.rm.open_resource(resource_name)
         self.instr.timeout = 5000
-        print(f"Connesso: {self.identify()}")
+        print(f"Connected: {self.identify()}")
 
     def identify(self):
         """
-        Identifica lo strumento tramite comando SCPI *IDN?
+        Identify the instrument via SCPI command *IDN?
 
         Returns:
-            str: Stringa identificativa (produttore, modello, seriale, firmware)
+            str: Identification string (manufacturer, model, serial, firmware)
         """
         return self.instr.query("*IDN?").strip()
 
     def reset(self):
         """
-        Esegue reset dello strumento ai valori di fabbrica
-        Comando SCPI: *RST
+        Resets the instrument to factory defaults
+        SCPI command: *RST
         """
         self.instr.write("*RST")
 
-    # === CONTROLLO CANALE ===
+    # === CHANNEL CONTROL ===
 
     def set_function(self, channel, func):
         """
-        Imposta la forma d'onda per il canale specificato
+        Sets the waveform type for the specified channel
 
         Args:
-            channel: Numero canale (1 o 2)
-            func: Tipo di forma d'onda - valori ammessi:
-                  'SIN'   - Sinusoide
-                  'SQU'   - Onda quadra
-                  'RAMP'  - Rampa/triangolare
-                  'PULSE' - Impulso
-                  'NOIS'  - Rumore
-                  'ARB'   - Arbitraria
-                  'DC'    - Continua
+            channel: Channel number (1 or 2)
+            func: Waveform type - allowed values:
+                  'SIN'   - Sine wave
+                  'SQU'   - Square wave
+                  'RAMP'  - Ramp/triangular
+                  'PULSE' - Pulse
+                  'NOIS'  - Noise
+                  'ARB'   - Arbitrary
+                  'DC'    - DC
         """
         self.instr.write(f"SOUR{channel}:FUNC {func}")
 
     def set_frequency(self, channel, freq):
         """
-        Imposta la frequenza del segnale
+        Sets the signal frequency
 
         Args:
-            channel: Numero canale (1 o 2)
-            freq: Frequenza in Hz (range dipende dal modello e dalla forma d'onda)
+            channel: Channel number (1 or 2)
+            freq: Frequency in Hz (range depends on model and waveform)
         """
         self.instr.write(f"SOUR{channel}:FREQ {freq}")
 
     def set_frequency_khz(self, channel, freq_khz):
         """
-        Imposta la frequenza del segnale in kHz
+        Sets the signal frequency in kHz
 
         Args:
-            channel: Numero canale (1 o 2)
-            freq_khz: Frequenza in kHz
+            channel: Channel number (1 or 2)
+            freq_khz: Frequency in kHz
         """
         freq_hz = freq_khz * 1000
         self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_frequency_mhz(self, channel, freq_mhz):
         """
-        Imposta la frequenza del segnale in MHz
+        Sets the signal frequency in MHz
 
         Args:
-            channel: Numero canale (1 o 2)
-            freq_mhz: Frequenza in MHz
+            channel: Channel number (1 or 2)
+            freq_mhz: Frequency in MHz
         """
         freq_hz = freq_mhz * 1000000
         self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_frequency_with_unit(self, channel, value, unit):
         """
-        Imposta la frequenza con unità specificata
+        Sets frequency with specified unit
 
         Args:
-            channel: Numero canale (1 o 2)
-            value: Valore numerico della frequenza
-            unit: Unità di misura ('HZ', 'KHZ', 'MHZ')
+            channel: Channel number (1 or 2)
+            value: Numeric frequency value
+            unit: Unit of measurement ('HZ', 'KHZ', 'MHZ')
         """
         if unit.upper() == 'HZ':
             freq_hz = value
@@ -122,192 +122,192 @@ class RigolDG:
         elif unit.upper() == 'MHZ':
             freq_hz = value * 1000000
         else:
-            raise ValueError(f"Unità non supportata: {unit}. Usa 'HZ', 'KHZ', o 'MHZ'")
+            raise ValueError(f"Unsupported unit: {unit}. Use 'HZ', 'KHZ', or 'MHZ'")
 
         self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_amplitude(self, channel, ampl):
         """
-        Imposta l'ampiezza del segnale
+        Sets the signal amplitude
 
         Args:
-            channel: Numero canale (1 o 2)
-            ampl: Ampiezza in Vpp (Volt picco-picco)
-                  Range tipico: 1mVpp - 10Vpp (dipende dal carico)
+            channel: Channel number (1 or 2)
+            ampl: Amplitude in Vpp (Volt peak-to-peak)
+                  Typical range: 1mVpp - 10Vpp (depends on load)
         """
         self.instr.write(f"SOUR{channel}:VOLT {ampl}")
 
     def set_amplitude_dbm(self, channel, dbm_value):
         """
-        Imposta l'ampiezza del segnale in dBm (per carico 50Ω)
+        Sets the signal amplitude in dBm (for 50Ω load)
 
         Args:
-            channel: Numero canale (1 o 2)
-            dbm_value: Potenza in dBm
-                      Range tipico: -40 dBm a +20 dBm (dipende dal modello)
+            channel: Channel number (1 or 2)
+            dbm_value: Power in dBm
+                      Typical range: -40 dBm to +20 dBm (depends on model)
         """
         self.instr.write(f"SOUR{channel}:VOLT:UNIT DBM")
         self.instr.write(f"SOUR{channel}:VOLT {dbm_value}")
 
     def set_amplitude_unit(self, channel, unit):
         """
-        Imposta l'unità di misura per l'ampiezza
+        Sets the unit of measurement for amplitude
 
         Args:
-            channel: Numero canale (1 o 2)
-            unit: Unità di misura
-                  'VPP' - Volt picco-picco
+            channel: Channel number (1 or 2)
+            unit: Unit of measurement
+                  'VPP' - Volt peak-to-peak
                   'VRMS' - Volt RMS
-                  'DBM' - dBm (per carico 50Ω)
+                  'DBM' - dBm (for 50Ω load)
         """
         self.instr.write(f"SOUR{channel}:VOLT:UNIT {unit}")
 
     def get_amplitude_unit(self, channel):
         """
-        Ottiene l'unità di misura corrente per l'ampiezza
+        Gets the current unit of measurement for amplitude
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
-            str: Unità corrente ('VPP', 'VRMS', 'DBM')
+            str: Current unit ('VPP', 'VRMS', 'DBM')
         """
         return self.instr.query(f"SOUR{channel}:VOLT:UNIT?").strip()
 
     def set_offset(self, channel, offset):
         """
-        Imposta l'offset DC del segnale
+        Sets the DC offset of the signal
 
         Args:
-            channel: Numero canale (1 o 2)
-            offset: Offset in Volt (può essere positivo o negativo)
+            channel: Channel number (1 or 2)
+            offset: Offset in Volts (can be positive or negative)
         """
         self.instr.write(f"SOUR{channel}:VOLT:OFFS {offset}")
 
     def set_phase(self, channel, phase):
         """
-        Imposta la fase del segnale
+        Sets the signal phase
 
         Args:
-            channel: Numero canale (1 o 2)
-            phase: Fase in gradi (0-360°)
+            channel: Channel number (1 or 2)
+            phase: Phase in degrees (0-360°)
         """
         self.instr.write(f"SOUR{channel}:PHAS {phase}")
 
     def set_duty_cycle(self, channel, duty):
         """
-        Imposta il duty cycle per onda quadra
+        Sets the duty cycle for square wave
 
         Args:
-            channel: Numero canale (1 o 2)
-            duty: Duty cycle in percentuale (tipicamente 0.01% - 99.99%)
-                  50% = onda quadra simmetrica
+            channel: Channel number (1 or 2)
+            duty: Duty cycle in percentage (typically 0.01% - 99.99%)
+                  50% = symmetric square wave
         """
         self.instr.write(f"SOUR{channel}:FUNC:SQU:DCYC {duty}")
 
-    # === CONTROLLO OUTPUT ===
+    # === OUTPUT CONTROL ===
 
     def output_on(self, channel):
         """
-        Attiva l'output del canale specificato
+        Enables the output of the specified channel
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
         """
         self.instr.write(f"OUTP{channel} ON")
 
     def output_off(self, channel):
         """
-        Disattiva l'output del canale specificato
+        Disables the output of the specified channel
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
         """
         self.instr.write(f"OUTP{channel} OFF")
 
     def set_output_load(self, channel, load):
         """
-        Imposta l'impedenza di carico dell'output
+        Sets the output load impedance
 
         Args:
-            channel: Numero canale (1 o 2)
-            load: Impedenza in Ohm (es: 50) o 'INF' per alta impedenza
-                  Il carico influenza l'ampiezza reale del segnale
+            channel: Channel number (1 or 2)
+            load: Impedance in Ohms (e.g. 50) or 'INF' for high impedance
+                  The load affects the actual signal amplitude
         """
         self.instr.write(f"OUTP{channel}:LOAD {load}")
 
     def set_50ohm_dbm_mode(self, channel):
         """
-        Configura rapidamente il canale per misure RF:
-        - Impedenza di carico 50Ω
-        - Unità di ampiezza in dBm
+        Quickly configures the channel for RF measurements:
+        - Load impedance 50Ω
+        - Amplitude unit in dBm
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
         """
         self.set_output_load(channel, "50")
         self.set_amplitude_unit(channel, "DBM")
 
-    # === QUERY (LETTURA STATO) ===
+    # === QUERY (STATUS READING) ===
 
     def get_frequency(self, channel):
         """
-        Legge la frequenza attuale del canale
+        Reads the current frequency of the channel
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
-            float: Frequenza in Hz
+            float: Frequency in Hz
         """
         return float(self.instr.query(f"SOUR{channel}:FREQ?"))
 
     def get_amplitude(self, channel):
         """
-        Legge l'ampiezza attuale del canale
+        Reads the current amplitude of the channel
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
-            float: Ampiezza in Vpp
+            float: Amplitude in Vpp
         """
         return float(self.instr.query(f"SOUR{channel}:VOLT?"))
 
     def get_function(self, channel):
         """
-        Legge la forma d'onda attuale del canale
+        Reads the current waveform of the channel
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
-            str: Tipo di forma d'onda (SIN, SQU, RAMP, ecc.)
+            str: Waveform type (SIN, SQU, RAMP, etc.)
         """
         return self.instr.query(f"SOUR{channel}:FUNC?").strip()
 
     def is_output_on(self, channel):
         """
-        Verifica se l'output è attivo
+        Checks if the output is active
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
-            bool: True se attivo, False se disattivo
+            bool: True if active, False if inactive
         """
         return self.instr.query(f"OUTP{channel}?").strip() == "ON"
 
-    # === MODULAZIONE ===
+    # === MODULATION ===
 
     def set_am_modulation(self, channel, depth, freq):
         """
-        Attiva modulazione di ampiezza (AM)
+        Enables amplitude modulation (AM)
 
         Args:
-            channel: Numero canale (1 o 2)
-            depth: Profondità di modulazione in % (0-120)
-            freq: Frequenza modulante in Hz
+            channel: Channel number (1 or 2)
+            depth: Modulation depth in % (0-120)
+            freq: Modulating frequency in Hz
         """
         self.instr.write(f"SOUR{channel}:AM:STAT ON")
         self.instr.write(f"SOUR{channel}:AM:DEPT {depth}")
@@ -315,12 +315,12 @@ class RigolDG:
 
     def set_fm_modulation(self, channel, deviation, freq):
         """
-        Attiva modulazione di frequenza (FM)
+        Enables frequency modulation (FM)
 
         Args:
-            channel: Numero canale (1 o 2)
-            deviation: Deviazione di frequenza in Hz
-            freq: Frequenza modulante in Hz
+            channel: Channel number (1 or 2)
+            deviation: Frequency deviation in Hz
+            freq: Modulating frequency in Hz
         """
         self.instr.write(f"SOUR{channel}:FM:STAT ON")
         self.instr.write(f"SOUR{channel}:FM:DEV {deviation}")
@@ -328,85 +328,85 @@ class RigolDG:
 
     def modulation_off(self, channel):
         """
-        Disattiva tutte le modulazioni (AM, FM, PM)
+        Disables all modulations (AM, FM, PM)
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
         """
         self.instr.write(f"SOUR{channel}:AM:STAT OFF")
         self.instr.write(f"SOUR{channel}:FM:STAT OFF")
         self.instr.write(f"SOUR{channel}:PM:STAT OFF")
 
-    # === FORME D'ONDA ARBITRARIE ===
+    # === ARBITRARY WAVEFORMS ===
 
     def create_arb_waveform(self, channel, data, name=None):
         """
-        Crea una forma d'onda arbitraria personalizzata
+        Creates a custom arbitrary waveform
 
         Args:
-            channel: Numero canale (1 o 2)
-            data: Lista di valori normalizzati tra -1.0 e +1.0
-                  Es: [0, 0.5, 1.0, 0.5, 0, -0.5, -1.0, -0.5]
-            name: Nome da assegnare alla forma d'onda (opzionale)
-                  Se None, carica direttamente nella memoria volatile
+            channel: Channel number (1 or 2)
+            data: List of normalized values between -1.0 and +1.0
+                  Ex: [0, 0.5, 1.0, 0.5, 0, -0.5, -1.0, -0.5]
+            name: Name to assign to the waveform (optional)
+                  If None, loads directly into volatile memory
         """
-        # Converte i dati in formato stringa CSV per comando SCPI
+        # Convert data to CSV string format for SCPI command
         data_str = ",".join([str(v) for v in data])
 
         if name:
-            # Salva con nome in memoria non volatile
+            # Save with name in non-volatile memory
             self.instr.write(f"DATA:DAC VOLATILE,{data_str}")
             self.instr.write(f"DATA:COPY {name},VOLATILE")
         else:
-            # Carica direttamente in memoria volatile
+            # Load directly into volatile memory
             self.instr.write(f"SOUR{channel}:DATA VOLATILE,{data_str}")
 
     def load_arb_waveform(self, channel, name):
         """
-        Carica una forma d'onda arbitraria precedentemente salvata
+        Loads a previously saved arbitrary waveform
 
         Args:
-            channel: Numero canale (1 o 2)
-            name: Nome della forma d'onda da caricare
+            channel: Channel number (1 or 2)
+            name: Name of the waveform to load
         """
         self.instr.write(f"SOUR{channel}:FUNC ARB")
         self.instr.write(f"SOUR{channel}:FUNC:ARB {name}")
 
     def get_arb_list(self):
         """
-        Restituisce lista delle forme d'onda arbitrarie salvate in memoria
+        Returns list of arbitrary waveforms saved in memory
 
         Returns:
-            list: Lista dei nomi delle forme d'onda disponibili
+            list: List of available waveform names
         """
         return self.instr.query("DATA:CAT?").strip().split(',')
 
     def delete_arb_waveform(self, name):
         """
-        Elimina una forma d'onda arbitraria dalla memoria
+        Deletes an arbitrary waveform from memory
 
         Args:
-            name: Nome della forma d'onda da eliminare
+            name: Name of the waveform to delete
         """
         self.instr.write(f"DATA:DEL {name}")
 
     def set_arb_sample_rate(self, channel, rate):
         """
-        Imposta il sample rate per la forma d'onda arbitraria
+        Sets the sample rate for the arbitrary waveform
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
             rate: Sample rate in Sa/s (Samples per second)
-                  Range tipico: 1 µSa/s - 200 MSa/s (dipende dal modello)
+                  Typical range: 1 µSa/s - 200 MSa/s (depends on model)
         """
         self.instr.write(f"SOUR{channel}:FUNC:ARB:SRAT {rate}")
 
     def get_arb_sample_rate(self, channel):
         """
-        Legge il sample rate attuale della forma d'onda arbitraria
+        Reads the current sample rate of the arbitrary waveform
 
         Args:
-            channel: Numero canale (1 o 2)
+            channel: Channel number (1 or 2)
 
         Returns:
             float: Sample rate in Sa/s
@@ -415,20 +415,20 @@ class RigolDG:
 
     def load_arb_from_csv(self, channel, csv_file, name=None, normalize=True):
         """
-        Carica forma d'onda arbitraria da file CSV
+        Loads arbitrary waveform from CSV file
 
         Args:
-            channel: Numero canale (1 o 2)
-            csv_file: Percorso del file CSV da caricare
-            name: Nome da assegnare alla forma d'onda (opzionale)
-            normalize: Normalizza automaticamente i valori tra -1 e +1 (default: True)
+            channel: Channel number (1 or 2)
+            csv_file: Path to the CSV file to load
+            name: Name to assign to the waveform (optional)
+            normalize: Automatically normalize values between -1 and +1 (default: True)
 
         Returns:
-            int: Numero di punti caricati
+            int: Number of loaded points
 
-        FORMATI CSV SUPPORTATI:
+        SUPPORTED CSV FORMATS:
 
-        1) Una colonna con solo valori di ampiezza:
+        1) One column with amplitude values only:
            0.0
            0.309
            0.588
@@ -437,25 +437,25 @@ class RigolDG:
            1.0
            ...
 
-        2) Due colonne (tempo, ampiezza) - la colonna tempo viene ignorata:
+        2) Two columns (time, amplitude) - time column is ignored:
            0.000, 0.0
            0.001, 0.309
            0.002, 0.588
            0.003, 0.809
            ...
 
-        3) Con intestazione (viene automaticamente rilevata e ignorata):
+        3) With header (automatically detected and ignored):
            time,voltage
            0.000, 0.0
            0.001, 0.309
            ...
 
-        NOTE:
-        - I valori devono essere numerici
-        - Se normalize=False, i valori devono essere già tra -1 e +1
-        - Numero massimo punti: dipende dal modello (tipicamente 8k-16k)
-        - Il separatore può essere virgola o punto e virgola
-        - Righe non valide vengono automaticamente ignorate
+        NOTES:
+        - Values must be numeric
+        - If normalize=False, values must already be between -1 and +1
+        - Maximum points: depends on model (typically 8k-16k)
+        - Separator can be comma or semicolon
+        - Invalid rows are automatically ignored
         """
         import csv
 
@@ -464,63 +464,63 @@ class RigolDG:
         with open(csv_file, 'r') as f:
             reader = csv.reader(f, delimiter=',')
 
-            # Prova a rilevare e gestire intestazione
+            # Try to detect and handle header
             first_row = next(reader)
             try:
-                # Se la prima riga è numerica, usala come dato
+                # If first row is numeric, use it as data
                 if len(first_row) == 1:
                     data.append(float(first_row[0]))
                 else:
-                    data.append(float(first_row[-1]))  # Prende ultima colonna
+                    data.append(float(first_row[-1]))  # Take last column
             except ValueError:
-                # Prima riga è intestazione testuale, ignorala
+                # First row is text header, ignore it
                 pass
 
-            # Leggi tutti i dati rimanenti
+            # Read all remaining data
             for row in reader:
                 if len(row) == 0:
                     continue
                 try:
-                    # Prende l'ultima colonna (assume sia l'ampiezza)
+                    # Take the last column (assume it's the amplitude)
                     value = float(row[-1].strip())
                     data.append(value)
                 except ValueError:
-                    continue  # Salta righe non valide
+                    continue  # Skip invalid rows
 
         if not data:
-            raise ValueError("Nessun dato valido trovato nel file CSV")
+            raise ValueError("No valid data found in CSV file")
 
-        # Normalizza i valori tra -1 e +1 se richiesto
+        # Normalize values between -1 and +1 if requested
         if normalize:
             data_array = np.array(data)
             data_min = data_array.min()
             data_max = data_array.max()
 
             if data_max != data_min:
-                # Formula normalizzazione: y = 2*(x-min)/(max-min) - 1
+                # Normalization formula: y = 2*(x-min)/(max-min) - 1
                 data_array = 2 * (data_array - data_min) / (data_max - data_min) - 1
             else:
-                # Se tutti i valori sono uguali, imposta a zero
+                # If all values are equal, set to zero
                 data_array = np.zeros_like(data_array)
 
             data = data_array.tolist()
 
-        # Carica la forma d'onda nello strumento
+        # Load the waveform into the instrument
         self.create_arb_waveform(channel, data, name)
 
         return len(data)
 
-    # === FUNZIONI PREDEFINITE AVANZATE ===
+    # === ADVANCED PREDEFINED FUNCTIONS ===
 
     def create_sine_burst(self, channel, cycles, freq, ampl):
         """
-        Crea un burst sinusoidale (pacchetto di cicli)
+        Creates a sine burst (packet of cycles)
 
         Args:
-            channel: Numero canale (1 o 2)
-            cycles: Numero di cicli per burst
-            freq: Frequenza della sinusoide in Hz
-            ampl: Ampiezza in Vpp
+            channel: Channel number (1 or 2)
+            cycles: Number of cycles per burst
+            freq: Sine frequency in Hz
+            ampl: Amplitude in Vpp
         """
         self.set_function(channel, "SIN")
         self.set_frequency(channel, freq)
@@ -530,13 +530,13 @@ class RigolDG:
 
     def create_custom_pulse(self, channel, width, period, edge_time):
         """
-        Crea un impulso con parametri personalizzati
+        Creates a pulse with custom parameters
 
         Args:
-            channel: Numero canale (1 o 2)
-            width: Larghezza dell'impulso in secondi (es: 1e-3 = 1ms)
-            period: Periodo di ripetizione in secondi (es: 10e-3 = 10ms)
-            edge_time: Tempo di salita/discesa in secondi (es: 10e-9 = 10ns)
+            channel: Channel number (1 or 2)
+            width: Pulse width in seconds (e.g. 1e-3 = 1ms)
+            period: Repetition period in seconds (e.g. 10e-3 = 10ms)
+            edge_time: Rise/fall time in seconds (e.g. 10e-9 = 10ns)
         """
         self.set_function(channel, "PULSE")
         self.instr.write(f"SOUR{channel}:FUNC:PULS:WIDT {width}")
@@ -545,15 +545,15 @@ class RigolDG:
 
     def create_ramp(self, channel, freq, symmetry):
         """
-        Crea una rampa (dente di sega) con simmetria personalizzata
+        Creates a ramp (sawtooth) with custom symmetry
 
         Args:
-            channel: Numero canale (1 o 2)
-            freq: Frequenza in Hz
-            symmetry: Simmetria in % (0-100)
-                      0%   = rampa discendente (\)
-                      50%  = triangolare (/\)
-                      100% = rampa ascendente (/)
+            channel: Channel number (1 or 2)
+            freq: Frequency in Hz
+            symmetry: Symmetry in % (0-100)
+                      0%   = falling ramp (\)
+                      50%  = triangular (/\)
+                      100% = rising ramp (/)
         """
         self.set_function(channel, "RAMP")
         self.set_frequency(channel, freq)
@@ -561,52 +561,52 @@ class RigolDG:
 
     def close(self):
         """
-        Chiude la connessione VISA con lo strumento
+        Closes the VISA connection to the instrument
 
-        Importante: chiamare sempre questo metodo alla fine della sessione
+        Important: always call this method at the end of the session
         """
         self.instr.close()
         self.rm.close()
 
 
-# === ESEMPIO D'USO ===
+# === USAGE EXAMPLE ===
 
 if __name__ == "__main__":
-    # Connessione (rileverà automaticamente il dispositivo)
+    # Connection (will auto-detect the device)
     gen = RigolDG()
 
-    # Oppure specifica l'indirizzo direttamente:
+    # Or specify the address directly:
     # gen = RigolDG('TCPIP0::192.168.1.100::INSTR')
 
     try:
-        # Configura canale 1: sinusoide 1kHz, 2Vpp
+        # Configure channel 1: sine wave 1kHz, 2Vpp
         gen.set_function(1, "SIN")
         gen.set_frequency(1, 1000)
         gen.set_amplitude(1, 2)
         gen.set_offset(1, 0)
 
-        # Attiva output
+        # Enable output
         gen.output_on(1)
 
-        # Leggi configurazione
-        print(f"\nCanale 1:")
-        print(f"  Funzione: {gen.get_function(1)}")
-        print(f"  Frequenza: {gen.get_frequency(1)} Hz")
-        print(f"  Ampiezza: {gen.get_amplitude(1)} Vpp")
+        # Read configuration
+        print(f"\nChannel 1:")
+        print(f"  Function: {gen.get_function(1)}")
+        print(f"  Frequency: {gen.get_frequency(1)} Hz")
+        print(f"  Amplitude: {gen.get_amplitude(1)} Vpp")
         print(f"  Output: {'ON' if gen.is_output_on(1) else 'OFF'}")
 
-        # Esempio modulazione AM
+        # AM modulation example
         # gen.set_am_modulation(1, depth=50, freq=100)
 
-        # Esempio forma d'onda arbitraria: sinc
+        # Arbitrary waveform example: sinc
         # t = np.linspace(-np.pi, np.pi, 1000)
         # sinc_wave = np.sinc(t)
         # gen.create_arb_waveform(1, sinc_wave.tolist(), "SINC")
         # gen.load_arb_waveform(1, "SINC")
 
-        # Esempio caricamento da CSV
+        # CSV loading example
         # num_points = gen.load_arb_from_csv(1, "waveform.csv", name="MY_WAVE")
-        # print(f"Caricati {num_points} punti da CSV")
+        # print(f"Loaded {num_points} points from CSV")
         # gen.load_arb_waveform(1, "MY_WAVE")
 
     finally:
