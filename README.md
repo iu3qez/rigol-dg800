@@ -1,4 +1,4 @@
-# Rigol DG800/DG900 Controller
+# Rigol DG800/DG900 Controller (with a gui, eventually)
 
 Python library for remote control of Rigol DG800 and DG900 series arbitrary function generators via VISA interface.
 
