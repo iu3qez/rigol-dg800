@@ -7,7 +7,7 @@ Requires: pip install pyvisa pyvisa-py numpy tkinter
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import threading
-from rigol_dg import RigolDG
+from rigol_dg import RigolDG, wav_to_csv
 import numpy as np
 import pyvisa as visa
 
@@ -421,9 +421,29 @@ class RigolDGGUI:
         self.csv_path_label = ttk.Label(csv_frame, text="No file selected")
         self.csv_path_label.grid(row=2, column=0, columnspan=5)
 
+        # === LOAD FROM WAV ===
+        wav_frame = ttk.LabelFrame(self.arb_frame, text="Load from WAV Audio", padding=10)
+        wav_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+
+        ttk.Label(wav_frame, text="Max points:").grid(row=0, column=0, sticky="w")
+        self.wav_max_points = tk.StringVar(value="8192")
+        ttk.Combobox(wav_frame, textvariable=self.wav_max_points, width=10,
+                    values=["4096", "8192", "16384"]).grid(row=0, column=1, padx=5)
+
+        ttk.Label(wav_frame, text="Channel:").grid(row=0, column=2, sticky="w", padx=(20,0))
+        self.wav_channel = tk.StringVar(value="0")
+        ttk.Combobox(wav_frame, textvariable=self.wav_channel, width=10,
+                    values=["0 (Left/Mono)", "1 (Right)"]).grid(row=0, column=3, padx=5)
+
+        ttk.Button(wav_frame, text="Select WAV File",
+                  command=self.load_wav).grid(row=1, column=0, columnspan=4, pady=10)
+
+        self.wav_path_label = ttk.Label(wav_frame, text="No file selected")
+        self.wav_path_label.grid(row=2, column=0, columnspan=4)
+
         # === CREATE FROM FUNCTION ===
         func_frame = ttk.LabelFrame(self.arb_frame, text="Generate Waveform", padding=10)
-        func_frame.grid(row=1, column=0, sticky="ew", padx=10, pady=5)
+        func_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
 
         ttk.Label(func_frame, text="Type:").grid(row=0, column=0, sticky="w")
         self.arb_type = tk.StringVar(value="sinc")
@@ -439,7 +459,7 @@ class RigolDGGUI:
 
         # === SAMPLE RATE ===
         srate_frame = ttk.LabelFrame(self.arb_frame, text="Sample Rate", padding=10)
-        srate_frame.grid(row=2, column=0, sticky="ew", padx=10, pady=5)
+        srate_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
 
         ttk.Label(srate_frame, text="Sample Rate (Sa/s):").grid(row=0, column=0, sticky="w")
         self.arb_srate = tk.StringVar(value="1e6")
@@ -450,7 +470,7 @@ class RigolDGGUI:
 
         # === WAVEFORM MANAGEMENT ===
         manage_frame = ttk.LabelFrame(self.arb_frame, text="Waveform Management", padding=10)
-        manage_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
+        manage_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
 
         ttk.Button(manage_frame, text="List Waveforms",
                   command=self.list_arb_waveforms).grid(row=0, column=0, padx=5, pady=5)
@@ -469,7 +489,7 @@ class RigolDGGUI:
 
         # === INFO AREA ===
         info_frame = ttk.LabelFrame(self.arb_frame, text="Information", padding=10)
-        info_frame.grid(row=4, column=0, sticky="ew", padx=10, pady=5)
+        info_frame.grid(row=5, column=0, sticky="ew", padx=10, pady=5)
 
         self.arb_info = tk.Text(info_frame, height=8, width=70)
         self.arb_info.grid(row=0, column=0, padx=5, pady=5)
@@ -837,6 +857,66 @@ class RigolDGGUI:
             self.arb_info.insert(tk.END, f"\nUse 'Load ARB' to activate the waveform")
 
             messagebox.showinfo("OK", f"Loaded {num_points} points from CSV")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def load_wav(self):
+        """Load waveform from WAV file"""
+        if not self.check_connection():
+            return
+
+        filename = filedialog.askopenfilename(
+            title="Select WAV file",
+            filetypes=[("WAV files", "*.wav"), ("All files", "*.*")]
+        )
+
+        if not filename:
+            return
+
+        self.wav_path_label.config(text=f"File: {filename}")
+
+        try:
+            import tempfile
+            import os
+
+            channel = int(self.arb_channel.get())
+            name = self.arb_name.get()
+            max_points = int(self.wav_max_points.get())
+            wav_channel = int(self.wav_channel.get().split()[0])  # Extract number from "0 (Left/Mono)"
+
+            # Convert WAV to temporary CSV
+            temp_csv = tempfile.NamedTemporaryFile(mode='w', suffix='.csv', delete=False)
+            temp_csv.close()
+
+            # Convert WAV to CSV
+            info = wav_to_csv(filename, temp_csv.name, max_points=max_points,
+                            channel=wav_channel, normalize=True)
+
+            # Load CSV into generator
+            num_points = self.gen.load_arb_from_csv(channel, temp_csv.name, name, normalize=False)
+
+            # Set suggested sample rate
+            self.arb_srate.set(f"{info['suggested_sample_rate']:.0f}")
+            self.gen.set_arb_sample_rate(channel, info['suggested_sample_rate'])
+
+            # Clean up temp file
+            os.unlink(temp_csv.name)
+
+            # Update info
+            self.arb_info.delete(1.0, tk.END)
+            self.arb_info.insert(tk.END, f"WAV file loaded: {os.path.basename(filename)}\n")
+            self.arb_info.insert(tk.END, f"Original sample rate: {info['sample_rate']} Hz\n")
+            self.arb_info.insert(tk.END, f"Duration: {info['duration']:.3f} seconds\n")
+            self.arb_info.insert(tk.END, f"Channels: {info['channels']}\n")
+            self.arb_info.insert(tk.END, f"Points exported: {info['num_points']}\n")
+            self.arb_info.insert(tk.END, f"Generator sample rate: {info['suggested_sample_rate']:.0f} Sa/s\n")
+            self.arb_info.insert(tk.END, f"Downsampled: {'Yes' if info['downsampled'] else 'No'}\n")
+            self.arb_info.insert(tk.END, f"Name: {name}\n")
+            self.arb_info.insert(tk.END, f"\nUse 'Load ARB' to activate the waveform")
+
+            messagebox.showinfo("OK",
+                f"Loaded {num_points} points from WAV\n"
+                f"Sample rate set to {info['suggested_sample_rate']:.0f} Sa/s")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 

@@ -551,8 +551,8 @@ class RigolDG:
             channel: Channel number (1 or 2)
             freq: Frequency in Hz
             symmetry: Symmetry in % (0-100)
-                      0%   = falling ramp (\)
-                      50%  = triangular (/\)
+                      0%   = falling ramp (\\)
+                      50%  = triangular (/\\)
                       100% = rising ramp (/)
         """
         self.set_function(channel, "RAMP")
@@ -567,6 +567,116 @@ class RigolDG:
         """
         self.instr.close()
         self.rm.close()
+
+
+# === UTILITY FUNCTIONS ===
+
+def wav_to_csv(wav_file, csv_file, max_points=None, channel=0, normalize=True):
+    """
+    Converts a WAV audio file to CSV format for arbitrary waveform generation
+
+    Args:
+        wav_file: Path to input WAV file
+        csv_file: Path to output CSV file
+        max_points: Maximum number of points to export (None = use all)
+                   Typical limits: 8k-16k depending on generator model
+        channel: Audio channel to extract (0=left/mono, 1=right)
+        normalize: Normalize values between -1 and +1 (default: True)
+
+    Returns:
+        dict: Information about the conversion including:
+              - sample_rate: Original sample rate in Hz
+              - duration: Duration in seconds
+              - channels: Number of audio channels
+              - num_points: Number of points exported
+              - suggested_sample_rate: Recommended generator sample rate
+
+    Example:
+        >>> info = wav_to_csv("audio.wav", "waveform.csv", max_points=8192)
+        >>> print(f"Exported {info['num_points']} points")
+        >>> print(f"Suggested sample rate: {info['suggested_sample_rate']} Sa/s")
+    """
+    import wave
+    import struct
+
+    # Open and read WAV file
+    with wave.open(wav_file, 'rb') as wav:
+        # Get WAV parameters
+        n_channels = wav.getnchannels()
+        sample_width = wav.getsampwidth()
+        sample_rate = wav.getframerate()
+        n_frames = wav.getnframes()
+
+        # Check requested channel exists
+        if channel >= n_channels:
+            raise ValueError(f"Channel {channel} not available. File has {n_channels} channel(s)")
+
+        # Read all frames
+        frames = wav.readframes(n_frames)
+
+    # Parse audio data based on sample width
+    if sample_width == 1:  # 8-bit unsigned
+        fmt = f'{n_frames * n_channels}B'
+        data = struct.unpack(fmt, frames)
+        # Convert to signed and normalize
+        data = np.array(data, dtype=np.float64)
+        data = (data - 128) / 128.0
+    elif sample_width == 2:  # 16-bit signed
+        fmt = f'{n_frames * n_channels}h'
+        data = struct.unpack(fmt, frames)
+        data = np.array(data, dtype=np.float64) / 32768.0
+    elif sample_width == 3:  # 24-bit signed (rare)
+        # 24-bit needs special handling
+        data = []
+        for i in range(0, len(frames), 3 * n_channels):
+            for ch in range(n_channels):
+                offset = i + ch * 3
+                # Convert 3 bytes to signed int
+                val = int.from_bytes(frames[offset:offset+3], byteorder='little', signed=True)
+                data.append(val / 8388608.0)
+        data = np.array(data)
+    elif sample_width == 4:  # 32-bit signed
+        fmt = f'{n_frames * n_channels}i'
+        data = struct.unpack(fmt, frames)
+        data = np.array(data, dtype=np.float64) / 2147483648.0
+    else:
+        raise ValueError(f"Unsupported sample width: {sample_width} bytes")
+
+    # Reshape for multi-channel and extract requested channel
+    if n_channels > 1:
+        data = data.reshape(-1, n_channels)
+        data = data[:, channel]
+
+    # Downsample if max_points is specified
+    if max_points and len(data) > max_points:
+        # Use linear interpolation for downsampling
+        indices = np.linspace(0, len(data) - 1, max_points)
+        data = np.interp(indices, np.arange(len(data)), data)
+
+    # Normalize if requested
+    if normalize:
+        data_max = np.abs(data).max()
+        if data_max > 0:
+            data = data / data_max
+
+    # Write to CSV file
+    np.savetxt(csv_file, data, fmt='%.6f', delimiter=',',
+               header='amplitude', comments='')
+
+    # Calculate suggested sample rate for the generator
+    duration = n_frames / sample_rate
+    num_points = len(data)
+    suggested_sample_rate = num_points / duration
+
+    return {
+        'sample_rate': sample_rate,
+        'duration': duration,
+        'channels': n_channels,
+        'num_points': num_points,
+        'suggested_sample_rate': suggested_sample_rate,
+        'normalized': normalize,
+        'downsampled': max_points is not None and n_frames > max_points
+    }
 
 
 # === USAGE EXAMPLE ===
@@ -608,6 +718,15 @@ if __name__ == "__main__":
         # num_points = gen.load_arb_from_csv(1, "waveform.csv", name="MY_WAVE")
         # print(f"Loaded {num_points} points from CSV")
         # gen.load_arb_waveform(1, "MY_WAVE")
+
+        # WAV to CSV conversion example
+        # info = wav_to_csv("audio.wav", "waveform.csv", max_points=8192)
+        # print(f"\nWAV conversion:")
+        # print(f"  Exported: {info['num_points']} points")
+        # print(f"  Duration: {info['duration']:.3f} seconds")
+        # print(f"  Suggested sample rate: {info['suggested_sample_rate']:.0f} Sa/s")
+        # gen.load_arb_from_csv(1, "waveform.csv", name="AUDIO", normalize=False)
+        # gen.set_arb_sample_rate(1, info['suggested_sample_rate'])
 
     finally:
         gen.close()

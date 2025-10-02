@@ -98,6 +98,34 @@ print(f"Loaded {num_points} points")
 gen.load_arb_waveform(1, "MY_WAVE")
 ```
 
+### Convert WAV audio to CSV
+
+```python
+from rigol_dg import wav_to_csv
+
+# Convert WAV file to CSV (with automatic downsampling to 8k points)
+info = wav_to_csv("audio.wav", "waveform.csv", max_points=8192)
+
+print(f"Exported: {info['num_points']} points")
+print(f"Duration: {info['duration']:.3f} seconds")
+print(f"Suggested sample rate: {info['suggested_sample_rate']:.0f} Sa/s")
+
+# Load the converted waveform into generator
+gen.load_arb_from_csv(1, "waveform.csv", name="AUDIO", normalize=False)
+gen.set_arb_sample_rate(1, info['suggested_sample_rate'])
+gen.load_arb_waveform(1, "AUDIO")
+```
+
+**WAV conversion options:**
+- `max_points`: Limit output points (e.g., 8192, 16384) - automatically downsamples
+- `channel`: Select audio channel (0=left/mono, 1=right) for stereo files
+- `normalize`: Normalize amplitude to ±1 (default: True)
+
+**Supported WAV formats:**
+- 8-bit, 16-bit, 24-bit, 32-bit PCM
+- Mono or stereo (multi-channel)
+- Any sample rate
+
 #### Supported CSV formats
 
 **1. One column (amplitude only)**
