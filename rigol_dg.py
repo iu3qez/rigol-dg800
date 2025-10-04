@@ -6,9 +6,12 @@ Requires: pip install pyvisa pyvisa-py
 
 import pyvisa as visa
 import numpy as np
+import logging
+import time
+from datetime import datetime
 
 class RigolDG:
-    def __init__(self, resource_name=None):
+    def __init__(self, resource_name=None, debug=False):
         """
         Initialize connection to Rigol DG800/DG900 generator
 
@@ -17,7 +20,18 @@ class RigolDG:
                           Ex: 'USB0::0x1AB1::0x0642::DG9A12345678::INSTR'
                           Ex: 'TCPIP0::192.168.1.100::INSTR'
                           If None, shows list of available devices
+            debug: Enable debug logging (default: False)
         """
+        # Debug mode
+        self.debug = debug
+        self.debug_log = []
+
+        # Setup logging if debug enabled
+        if self.debug:
+            logging.basicConfig(level=logging.DEBUG)
+            # Enable pyvisa logging
+            visa.log_to_screen()
+
         # Initialize VISA ResourceManager with PyVISA-py backend
         self.rm = visa.ResourceManager('@py')
 
@@ -34,10 +48,102 @@ class RigolDG:
             idx = int(input("Select device (number): "))
             resource_name = resources[idx]
 
-        # Open connection with 5 second timeout
+        # Open connection with proper configuration
         self.instr = self.rm.open_resource(resource_name)
-        self.instr.timeout = 5000
-        print(f"Connected: {self.identify()}")
+        self.instr.timeout = 5000  # 5 seconds
+
+        # Configure terminators for SCPI communication
+        self.instr.read_termination = '\n'
+        self.instr.write_termination = '\n'
+
+        # For TCP/IP connections, set chunk size and add delay
+        if 'TCPIP' in resource_name:
+            self.instr.chunk_size = 4096  # 4KB chunks (more reliable for slow devices)
+            time.sleep(0.5)  # Give device time to stabilize TCP connection
+            # Disable delay between chunks for faster transfer
+            try:
+                self.instr.write_delay = 0
+            except:
+                pass
+
+        self._log_debug(f"Connected to {resource_name}")
+        self._log_debug(f"Timeout: {self.instr.timeout} ms")
+        self._log_debug(f"Read termination: {repr(self.instr.read_termination)}")
+        self._log_debug(f"Write termination: {repr(self.instr.write_termination)}")
+        if 'TCPIP' in resource_name:
+            self._log_debug(f"Chunk size: {self.instr.chunk_size} bytes")
+
+        # Try to identify the device
+        try:
+            idn = self.identify()
+            print(f"Connected: {idn}")
+        except Exception as e:
+            # If \n doesn't work, try \r\n
+            self._log_debug(f"Connection test failed with \\n, trying \\r\\n", is_error=True)
+            self.instr.read_termination = '\r\n'
+            self.instr.write_termination = '\r\n'
+            self._log_debug(f"Read termination: {repr(self.instr.read_termination)}")
+            self._log_debug(f"Write termination: {repr(self.instr.write_termination)}")
+
+            try:
+                idn = self.identify()
+                print(f"Connected: {idn}")
+            except Exception as e2:
+                # Last resort: try clearing the device and sending *CLS
+                self._log_debug(f"Connection test failed with \\r\\n, trying device clear", is_error=True)
+                try:
+                    self.instr.clear()
+                    self.instr.write("*CLS")
+                    idn = self.identify()
+                    print(f"Connected: {idn}")
+                except:
+                    raise Exception(f"Cannot communicate with device: {str(e2)}")
+
+    def _log_debug(self, message, is_error=False):
+        """Log debug message with timestamp"""
+        if self.debug:
+            timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+            log_entry = f"[{timestamp}] {message}"
+            self.debug_log.append(log_entry)
+            if is_error:
+                print(f"ERROR: {log_entry}")
+            else:
+                print(log_entry)
+
+    def _write(self, command):
+        """Wrapper for write with debug logging"""
+        # Truncate very long commands in debug log
+        if len(command) > 200:
+            log_cmd = command[:100] + f"...({len(command)} chars)..." + command[-50:]
+        else:
+            log_cmd = command
+
+        self._log_debug(f"TX: {log_cmd}")
+        try:
+            self.instr.write(command)
+            self._log_debug(f"TX OK")
+        except Exception as e:
+            self._log_debug(f"TX ERROR: {str(e)}", is_error=True)
+            raise
+
+    def _query(self, command):
+        """Wrapper for query with debug logging"""
+        self._log_debug(f"TX: {command}")
+        try:
+            response = self.instr.query(command).strip()
+            self._log_debug(f"RX: {response}")
+            return response
+        except Exception as e:
+            self._log_debug(f"RX ERROR: {str(e)}", is_error=True)
+            raise
+
+    def get_debug_log(self):
+        """Return debug log as list of strings"""
+        return self.debug_log.copy()
+
+    def clear_debug_log(self):
+        """Clear debug log"""
+        self.debug_log.clear()
 
     def identify(self):
         """
@@ -46,14 +152,14 @@ class RigolDG:
         Returns:
             str: Identification string (manufacturer, model, serial, firmware)
         """
-        return self.instr.query("*IDN?").strip()
+        return self._query("*IDN?")
 
     def reset(self):
         """
         Resets the instrument to factory defaults
         SCPI command: *RST
         """
-        self.instr.write("*RST")
+        self._write("*RST")
 
     # === CHANNEL CONTROL ===
 
@@ -72,7 +178,7 @@ class RigolDG:
                   'ARB'   - Arbitrary
                   'DC'    - DC
         """
-        self.instr.write(f"SOUR{channel}:FUNC {func}")
+        self._write(f"SOUR{channel}:FUNC {func}")
 
     def set_frequency(self, channel, freq):
         """
@@ -82,7 +188,7 @@ class RigolDG:
             channel: Channel number (1 or 2)
             freq: Frequency in Hz (range depends on model and waveform)
         """
-        self.instr.write(f"SOUR{channel}:FREQ {freq}")
+        self._write(f"SOUR{channel}:FREQ {freq}")
 
     def set_frequency_khz(self, channel, freq_khz):
         """
@@ -93,7 +199,7 @@ class RigolDG:
             freq_khz: Frequency in kHz
         """
         freq_hz = freq_khz * 1000
-        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+        self._write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_frequency_mhz(self, channel, freq_mhz):
         """
@@ -104,7 +210,7 @@ class RigolDG:
             freq_mhz: Frequency in MHz
         """
         freq_hz = freq_mhz * 1000000
-        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+        self._write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_frequency_with_unit(self, channel, value, unit):
         """
@@ -124,7 +230,7 @@ class RigolDG:
         else:
             raise ValueError(f"Unsupported unit: {unit}. Use 'HZ', 'KHZ', or 'MHZ'")
 
-        self.instr.write(f"SOUR{channel}:FREQ {freq_hz}")
+        self._write(f"SOUR{channel}:FREQ {freq_hz}")
 
     def set_amplitude(self, channel, ampl):
         """
@@ -135,7 +241,7 @@ class RigolDG:
             ampl: Amplitude in Vpp (Volt peak-to-peak)
                   Typical range: 1mVpp - 10Vpp (depends on load)
         """
-        self.instr.write(f"SOUR{channel}:VOLT {ampl}")
+        self._write(f"SOUR{channel}:VOLT {ampl}")
 
     def set_amplitude_dbm(self, channel, dbm_value):
         """
@@ -146,8 +252,8 @@ class RigolDG:
             dbm_value: Power in dBm
                       Typical range: -40 dBm to +20 dBm (depends on model)
         """
-        self.instr.write(f"SOUR{channel}:VOLT:UNIT DBM")
-        self.instr.write(f"SOUR{channel}:VOLT {dbm_value}")
+        self._write(f"SOUR{channel}:VOLT:UNIT DBM")
+        self._write(f"SOUR{channel}:VOLT {dbm_value}")
 
     def set_amplitude_unit(self, channel, unit):
         """
@@ -160,7 +266,7 @@ class RigolDG:
                   'VRMS' - Volt RMS
                   'DBM' - dBm (for 50Ω load)
         """
-        self.instr.write(f"SOUR{channel}:VOLT:UNIT {unit}")
+        self._write(f"SOUR{channel}:VOLT:UNIT {unit}")
 
     def get_amplitude_unit(self, channel):
         """
@@ -172,7 +278,7 @@ class RigolDG:
         Returns:
             str: Current unit ('VPP', 'VRMS', 'DBM')
         """
-        return self.instr.query(f"SOUR{channel}:VOLT:UNIT?").strip()
+        return self._query(f"SOUR{channel}:VOLT:UNIT?")
 
     def set_offset(self, channel, offset):
         """
@@ -182,7 +288,7 @@ class RigolDG:
             channel: Channel number (1 or 2)
             offset: Offset in Volts (can be positive or negative)
         """
-        self.instr.write(f"SOUR{channel}:VOLT:OFFS {offset}")
+        self._write(f"SOUR{channel}:VOLT:OFFS {offset}")
 
     def set_phase(self, channel, phase):
         """
@@ -192,7 +298,7 @@ class RigolDG:
             channel: Channel number (1 or 2)
             phase: Phase in degrees (0-360°)
         """
-        self.instr.write(f"SOUR{channel}:PHAS {phase}")
+        self._write(f"SOUR{channel}:PHAS {phase}")
 
     def set_duty_cycle(self, channel, duty):
         """
@@ -203,7 +309,7 @@ class RigolDG:
             duty: Duty cycle in percentage (typically 0.01% - 99.99%)
                   50% = symmetric square wave
         """
-        self.instr.write(f"SOUR{channel}:FUNC:SQU:DCYC {duty}")
+        self._write(f"SOUR{channel}:FUNC:SQU:DCYC {duty}")
 
     # === OUTPUT CONTROL ===
 
@@ -214,7 +320,7 @@ class RigolDG:
         Args:
             channel: Channel number (1 or 2)
         """
-        self.instr.write(f"OUTP{channel} ON")
+        self._write(f"OUTP{channel} ON")
 
     def output_off(self, channel):
         """
@@ -223,7 +329,7 @@ class RigolDG:
         Args:
             channel: Channel number (1 or 2)
         """
-        self.instr.write(f"OUTP{channel} OFF")
+        self._write(f"OUTP{channel} OFF")
 
     def set_output_load(self, channel, load):
         """
@@ -234,7 +340,7 @@ class RigolDG:
             load: Impedance in Ohms (e.g. 50) or 'INF' for high impedance
                   The load affects the actual signal amplitude
         """
-        self.instr.write(f"OUTP{channel}:LOAD {load}")
+        self._write(f"OUTP{channel}:LOAD {load}")
 
     def set_50ohm_dbm_mode(self, channel):
         """
@@ -260,7 +366,7 @@ class RigolDG:
         Returns:
             float: Frequency in Hz
         """
-        return float(self.instr.query(f"SOUR{channel}:FREQ?"))
+        return float(self._query(f"SOUR{channel}:FREQ?"))
 
     def get_amplitude(self, channel):
         """
@@ -272,7 +378,7 @@ class RigolDG:
         Returns:
             float: Amplitude in Vpp
         """
-        return float(self.instr.query(f"SOUR{channel}:VOLT?"))
+        return float(self._query(f"SOUR{channel}:VOLT?"))
 
     def get_function(self, channel):
         """
@@ -284,7 +390,7 @@ class RigolDG:
         Returns:
             str: Waveform type (SIN, SQU, RAMP, etc.)
         """
-        return self.instr.query(f"SOUR{channel}:FUNC?").strip()
+        return self._query(f"SOUR{channel}:FUNC?")
 
     def is_output_on(self, channel):
         """
@@ -296,7 +402,7 @@ class RigolDG:
         Returns:
             bool: True if active, False if inactive
         """
-        return self.instr.query(f"OUTP{channel}?").strip() == "ON"
+        return self._query(f"OUTP{channel}?") == "ON"
 
     # === MODULATION ===
 
@@ -309,9 +415,9 @@ class RigolDG:
             depth: Modulation depth in % (0-120)
             freq: Modulating frequency in Hz
         """
-        self.instr.write(f"SOUR{channel}:AM:STAT ON")
-        self.instr.write(f"SOUR{channel}:AM:DEPT {depth}")
-        self.instr.write(f"SOUR{channel}:AM:INT:FREQ {freq}")
+        self._write(f"SOUR{channel}:AM:STAT ON")
+        self._write(f"SOUR{channel}:AM:DEPT {depth}")
+        self._write(f"SOUR{channel}:AM:INT:FREQ {freq}")
 
     def set_fm_modulation(self, channel, deviation, freq):
         """
@@ -322,9 +428,9 @@ class RigolDG:
             deviation: Frequency deviation in Hz
             freq: Modulating frequency in Hz
         """
-        self.instr.write(f"SOUR{channel}:FM:STAT ON")
-        self.instr.write(f"SOUR{channel}:FM:DEV {deviation}")
-        self.instr.write(f"SOUR{channel}:FM:INT:FREQ {freq}")
+        self._write(f"SOUR{channel}:FM:STAT ON")
+        self._write(f"SOUR{channel}:FM:DEV {deviation}")
+        self._write(f"SOUR{channel}:FM:INT:FREQ {freq}")
 
     def modulation_off(self, channel):
         """
@@ -333,13 +439,13 @@ class RigolDG:
         Args:
             channel: Channel number (1 or 2)
         """
-        self.instr.write(f"SOUR{channel}:AM:STAT OFF")
-        self.instr.write(f"SOUR{channel}:FM:STAT OFF")
-        self.instr.write(f"SOUR{channel}:PM:STAT OFF")
+        self._write(f"SOUR{channel}:AM:STAT OFF")
+        self._write(f"SOUR{channel}:FM:STAT OFF")
+        self._write(f"SOUR{channel}:PM:STAT OFF")
 
     # === ARBITRARY WAVEFORMS ===
 
-    def create_arb_waveform(self, channel, data, name=None):
+    def create_arb_waveform(self, channel, data, name=None, use_binary=True):
         """
         Creates a custom arbitrary waveform
 
@@ -349,17 +455,115 @@ class RigolDG:
                   Ex: [0, 0.5, 1.0, 0.5, 0, -0.5, -1.0, -0.5]
             name: Name to assign to the waveform (optional)
                   If None, loads directly into volatile memory
+            use_binary: Use binary format for faster transfer (default: True)
+                       Set to False to use ASCII/CSV format
         """
-        # Convert data to CSV string format for SCPI command
-        data_str = ",".join([str(v) for v in data])
+        import struct
 
-        if name:
-            # Save with name in non-volatile memory
-            self.instr.write(f"DATA:DAC VOLATILE,{data_str}")
-            self.instr.write(f"DATA:COPY {name},VOLATILE")
-        else:
-            # Load directly into volatile memory
-            self.instr.write(f"SOUR{channel}:DATA VOLATILE,{data_str}")
+        data_size = len(data)
+
+        # Save original timeout and increase it for large transfers
+        original_timeout = self.instr.timeout
+        if data_size > 1000:
+            # Increase timeout based on data size
+            self.instr.timeout = max(10000, int(data_size * 0.5))
+            self._log_debug(f"Large waveform ({data_size} points), timeout increased to {self.instr.timeout} ms")
+
+        try:
+            # For large waveforms, use binary format (much faster and more reliable)
+            if use_binary and data_size > 100:
+                self._log_debug(f"Using binary format for {data_size} points...")
+
+                # Convert to 16-bit unsigned integers (0 to 16383 / 0x0000 to 0x3FFF)
+                # According to DG900 manual, DATA:DAC16 expects values from 0x0000 to 0x3FFF
+                data_array = np.array(data, dtype=np.float64)
+                # Scale from [-1.0, +1.0] to [0, 16383]
+                data_uint16 = np.clip((data_array + 1.0) * 8191.5, 0, 16383).astype(np.uint16)
+
+                # Convert to binary (little-endian, 2 bytes per point)
+                binary_data = data_uint16.tobytes()
+
+                # IEEE 488.2 binary block format: #<num_digits><num_bytes><data>
+                num_bytes = len(binary_data)
+                num_bytes_str = str(num_bytes)
+                num_digits = len(num_bytes_str)
+                header = f"#{num_digits}{num_bytes_str}".encode('ascii')
+
+                # Build complete command - use DATA:DAC16 with END flag (manual section 2.6.2)
+                # When flag is END, the instrument automatically switches to arbitrary waveform output
+                cmd = f"SOUR{channel}:TRAC:DATA:DAC16 VOLATILE,END,".encode('ascii') + header + binary_data
+
+                self._log_debug(f"Binary transfer: {num_bytes} bytes ({data_size} points)")
+                self._log_debug(f"Sending to channel {channel} VOLATILE memory with END flag...")
+                self._log_debug(f"Data range: 0x0000 to 0x3FFF (0 to 16383)")
+
+                # Send binary data
+                self.instr.write_raw(cmd + b'\n')
+                self._log_debug(f"Binary data sent successfully")
+                self._log_debug(f"Note: END flag automatically activates ARB waveform output")
+
+                time.sleep(0.3 if data_size < 5000 else 0.6)
+
+                # Verify ARB mode was activated (should happen automatically with END flag)
+                try:
+                    current_func = self._query(f"SOUR{channel}:FUNC?")
+                    self._log_debug(f"Current function: {current_func}")
+                    if "ARB" in current_func.strip().upper():
+                        self._log_debug(f"SUCCESS: ARB waveform activated automatically!")
+                    else:
+                        self._log_debug(f"Warning: Function is {current_func}, expected ARB", is_error=True)
+                        self._log_debug(f"Trying manual activation...", is_error=True)
+                        # Manual fallback
+                        self._write(f"SOUR{channel}:FUNC ARB")
+                        time.sleep(0.3)
+                        current_func = self._query(f"SOUR{channel}:FUNC?")
+                        self._log_debug(f"After manual activation: {current_func}")
+                except Exception as e:
+                    self._log_debug(f"Verification failed: {str(e)}", is_error=True)
+            else:
+                # ASCII format not supported by DG900 - fallback to binary
+                self._log_debug(f"ASCII format requested but not supported by DG900")
+                self._log_debug(f"Converting to binary format...")
+
+                # Convert to 16-bit unsigned integers (0 to 16383 / 0x0000 to 0x3FFF)
+                data_array = np.array(data, dtype=np.float64)
+                # Scale from [-1.0, +1.0] to [0, 16383]
+                data_uint16 = np.clip((data_array + 1.0) * 8191.5, 0, 16383).astype(np.uint16)
+
+                # Convert to binary
+                binary_data = data_uint16.tobytes()
+
+                # IEEE 488.2 binary block format
+                num_bytes = len(binary_data)
+                num_bytes_str = str(num_bytes)
+                num_digits = len(num_bytes_str)
+                header = f"#{num_digits}{num_bytes_str}".encode('ascii')
+
+                # Build complete command with END flag
+                cmd = f"SOUR{channel}:TRAC:DATA:DAC16 VOLATILE,END,".encode('ascii') + header + binary_data
+
+                self._log_debug(f"Sending {data_size} points to channel {channel}...")
+
+                # Send binary data
+                self.instr.write_raw(cmd + b'\n')
+                self._log_debug(f"Binary data sent successfully")
+                time.sleep(0.3)
+
+                # Verify
+                current_func = self._query(f"SOUR{channel}:FUNC?")
+                self._log_debug(f"Current function: {current_func}")
+
+                if "ARB" in current_func.strip().upper():
+                    self._log_debug(f"SUCCESS: ARB waveform activated!")
+                else:
+                    self._log_debug(f"Warning: Function is {current_func}, expected ARB", is_error=True)
+
+            self._log_debug("Waveform transfer complete")
+        finally:
+            # Restore original timeout
+            self.instr.timeout = original_timeout
+            if data_size > 1000:
+                self._log_debug(f"Timeout restored to {original_timeout} ms")
 
     def load_arb_waveform(self, channel, name):
         """
@@ -369,8 +573,8 @@ class RigolDG:
             channel: Channel number (1 or 2)
             name: Name of the waveform to load
         """
-        self.instr.write(f"SOUR{channel}:FUNC ARB")
-        self.instr.write(f"SOUR{channel}:FUNC:ARB {name}")
+        self._write(f"SOUR{channel}:FUNC ARB")
+        self._write(f"SOUR{channel}:FUNC:ARB {name}")
 
     def get_arb_list(self):
         """
@@ -379,7 +583,7 @@ class RigolDG:
         Returns:
             list: List of available waveform names
         """
-        return self.instr.query("DATA:CAT?").strip().split(',')
+        return self._query("DATA:CAT?").split(',')
 
     def delete_arb_waveform(self, name):
         """
@@ -388,7 +592,7 @@ class RigolDG:
         Args:
             name: Name of the waveform to delete
         """
-        self.instr.write(f"DATA:DEL {name}")
+        self._write(f"DATA:DEL {name}")
 
     def set_arb_sample_rate(self, channel, rate):
         """
@@ -399,7 +603,7 @@ class RigolDG:
             rate: Sample rate in Sa/s (Samples per second)
                   Typical range: 1 µSa/s - 200 MSa/s (depends on model)
         """
-        self.instr.write(f"SOUR{channel}:FUNC:ARB:SRAT {rate}")
+        self._write(f"SOUR{channel}:FUNC:ARB:SRAT {rate}")
 
     def get_arb_sample_rate(self, channel):
         """
@@ -411,7 +615,7 @@ class RigolDG:
         Returns:
             float: Sample rate in Sa/s
         """
-        return float(self.instr.query(f"SOUR{channel}:FUNC:ARB:SRAT?"))
+        return float(self._query(f"SOUR{channel}:FUNC:ARB:SRAT?"))
 
     def load_arb_from_csv(self, channel, csv_file, name=None, normalize=True):
         """
@@ -525,8 +729,8 @@ class RigolDG:
         self.set_function(channel, "SIN")
         self.set_frequency(channel, freq)
         self.set_amplitude(channel, ampl)
-        self.instr.write(f"SOUR{channel}:BURS:STAT ON")
-        self.instr.write(f"SOUR{channel}:BURS:NCYC {cycles}")
+        self._write(f"SOUR{channel}:BURS:STAT ON")
+        self._write(f"SOUR{channel}:BURS:NCYC {cycles}")
 
     def create_custom_pulse(self, channel, width, period, edge_time):
         """
@@ -539,9 +743,9 @@ class RigolDG:
             edge_time: Rise/fall time in seconds (e.g. 10e-9 = 10ns)
         """
         self.set_function(channel, "PULSE")
-        self.instr.write(f"SOUR{channel}:FUNC:PULS:WIDT {width}")
-        self.instr.write(f"SOUR{channel}:FUNC:PULS:PER {period}")
-        self.instr.write(f"SOUR{channel}:FUNC:PULS:TRAN {edge_time}")
+        self._write(f"SOUR{channel}:FUNC:PULS:WIDT {width}")
+        self._write(f"SOUR{channel}:FUNC:PULS:PER {period}")
+        self._write(f"SOUR{channel}:FUNC:PULS:TRAN {edge_time}")
 
     def create_ramp(self, channel, freq, symmetry):
         """
@@ -557,7 +761,55 @@ class RigolDG:
         """
         self.set_function(channel, "RAMP")
         self.set_frequency(channel, freq)
-        self.instr.write(f"SOUR{channel}:FUNC:RAMP:SYMM {symmetry}")
+        self._write(f"SOUR{channel}:FUNC:RAMP:SYMM {symmetry}")
+
+    def set_dual_tone(self, channel, freq1, freq2, amplitude=1.0):
+        """
+        Sets the built-in dual-tone waveform
+
+        Args:
+            channel: Channel number (1 or 2)
+            freq1: First frequency in Hz
+            freq2: Second frequency in Hz
+            amplitude: Output amplitude in Vpp (default: 1.0)
+        """
+        self._log_debug(f"Setting dual-tone on channel {channel}: f1={freq1}Hz, f2={freq2}Hz")
+
+        # Set function to DUALTone (correct command from manual)
+        self._log_debug(f"Setting function to DUALTone...")
+        self._write(f"SOUR{channel}:FUNC DUALTone")
+        time.sleep(0.2)
+
+        # Set the two frequencies using FUNC:DUALTone:FREQ1 and FREQ2
+        self._log_debug(f"Setting FREQ1 to {freq1} Hz...")
+        self._write(f"SOUR{channel}:FUNC:DUALTone:FREQ1 {freq1}")
+        time.sleep(0.1)
+
+        self._log_debug(f"Setting FREQ2 to {freq2} Hz...")
+        self._write(f"SOUR{channel}:FUNC:DUALTone:FREQ2 {freq2}")
+        time.sleep(0.1)
+
+        # Set amplitude
+        self._log_debug(f"Setting amplitude to {amplitude} Vpp...")
+        self._write(f"SOUR{channel}:VOLT {amplitude}")
+        time.sleep(0.1)
+
+        # Verify
+        current_func = self._query(f"SOUR{channel}:FUNC?")
+        self._log_debug(f"Current function: {current_func}")
+
+        func_upper = current_func.strip().upper()
+        if "DUAL" in func_upper:  # Accept both "DUAL" and "DUALTONE"
+            self._log_debug(f"SUCCESS: Dual-tone activated!")
+            # Read back the frequencies to confirm
+            try:
+                f1_actual = self._query(f"SOUR{channel}:FUNC:DUALTone:FREQ1?")
+                f2_actual = self._query(f"SOUR{channel}:FUNC:DUALTone:FREQ2?")
+                self._log_debug(f"Frequencies set: F1={f1_actual}Hz, F2={f2_actual}Hz")
+            except:
+                pass
+        else:
+            self._log_debug(f"Warning: Function is {current_func}, expected DUALTONE", is_error=True)
 
     def close(self):
         """
@@ -565,8 +817,18 @@ class RigolDG:
 
         Important: always call this method at the end of the session
         """
+        try:
+            # Return control to local (front panel) before closing
+            self._log_debug("Returning control to local (front panel)...")
+            self._write("SYSTem:LOCal")
+            time.sleep(0.1)
+        except:
+            # Ignore errors during close
+            pass
+
         self.instr.close()
         self.rm.close()
+        self._log_debug("Connection closed")
 
 
 # === UTILITY FUNCTIONS ===
