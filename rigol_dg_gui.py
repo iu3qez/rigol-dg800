@@ -183,6 +183,7 @@ class RigolDGGUI:
 
         self.gen = None
         self.connected = False
+        self.debug_mode = tk.BooleanVar(value=False)
 
         self.setup_ui()
 
@@ -201,8 +202,13 @@ class RigolDGGUI:
         self.connect_btn = ttk.Button(conn_frame, text="Connect", command=self.connect)
         self.connect_btn.grid(row=0, column=2, padx=5)
 
+        self.disconnect_btn = ttk.Button(conn_frame, text="Disconnect", command=self.disconnect, state="disabled")
+        self.disconnect_btn.grid(row=0, column=3, padx=5)
+
         self.status_label = ttk.Label(conn_frame, text="Not connected", foreground="red")
-        self.status_label.grid(row=0, column=3, padx=10)
+        self.status_label.grid(row=0, column=4, padx=10)
+
+        ttk.Checkbutton(conn_frame, text="Debug Mode", variable=self.debug_mode).grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
         # === NOTEBOOK FOR CHANNELS ===
         self.notebook = ttk.Notebook(self.root)
@@ -223,6 +229,11 @@ class RigolDGGUI:
         self.notebook.add(self.arb_frame, text="ARB Waveforms")
         self.setup_arb_controls()
 
+        # Tab Debug
+        self.debug_frame = ttk.Frame(self.notebook)
+        self.notebook.add(self.debug_frame, text="Debug")
+        self.setup_debug_controls()
+
         # Configure resizing
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(1, weight=1)
@@ -238,9 +249,9 @@ class RigolDGGUI:
         func_var = tk.StringVar(value="SIN")
         setattr(self, f"ch{channel}_func", func_var)
         func_combo = ttk.Combobox(wave_frame, textvariable=func_var, width=15,
-                                  values=["SIN", "SQU", "RAMP", "PULSE", "NOIS", "DC", "ARB"])
+                                  values=["SIN", "SQU", "RAMP", "PULSE", "NOIS", "DC", "DUAL", "ARB"])
         func_combo.grid(row=0, column=1, padx=5)
-        func_combo.bind("<<ComboboxSelected>>", lambda e: self.update_function(channel))
+        func_combo.bind("<<ComboboxSelected>>", lambda e: self.update_function_and_params(channel))
 
         # === BASIC PARAMETERS ===
         params_frame = ttk.LabelFrame(parent, text="Parameters", padding=10)
@@ -266,6 +277,25 @@ class RigolDGGUI:
 
         ttk.Button(params_frame, text="Apply",
                   command=lambda: self.set_frequency(channel)).grid(row=0, column=3, padx=5)
+
+        # Frequency 2 (for DUAL-TONE) - initially hidden
+        freq2_label = ttk.Label(params_frame, text="Frequency 2:")
+        setattr(self, f"ch{channel}_freq2_label", freq2_label)
+
+        freq2_var = tk.StringVar(value="1100")
+        setattr(self, f"ch{channel}_freq2", freq2_var)
+        freq2_entry = ttk.Entry(params_frame, textvariable=freq2_var, width=15)
+        setattr(self, f"ch{channel}_freq2_entry", freq2_entry)
+
+        freq2_unit_var = tk.StringVar(value="HZ")
+        setattr(self, f"ch{channel}_freq2_unit", freq2_unit_var)
+        freq2_unit_combo = ttk.Combobox(params_frame, textvariable=freq2_unit_var, width=8,
+                                        values=["HZ", "KHZ", "MHZ"], state="readonly")
+        setattr(self, f"ch{channel}_freq2_unit_combo", freq2_unit_combo)
+
+        freq2_apply_btn = ttk.Button(params_frame, text="Apply Dual-Tone",
+                                     command=lambda: self.set_dual_tone_params(channel))
+        setattr(self, f"ch{channel}_freq2_apply", freq2_apply_btn)
 
         # Amplitude
         ampl_label = ttk.Label(params_frame, text="Amplitude (Vpp):")
@@ -448,25 +478,49 @@ class RigolDGGUI:
         ttk.Label(func_frame, text="Type:").grid(row=0, column=0, sticky="w")
         self.arb_type = tk.StringVar(value="sinc")
         ttk.Combobox(func_frame, textvariable=self.arb_type, width=15,
-                    values=["sinc", "gauss", "exponential", "chirp"]).grid(row=0, column=1, padx=5)
+                    values=["sinc", "gauss", "exponential", "chirp", "dual-tone"]).grid(row=0, column=1, padx=5)
 
         ttk.Label(func_frame, text="Points:").grid(row=0, column=2, sticky="w", padx=(20,0))
         self.arb_points = tk.StringVar(value="1000")
         ttk.Entry(func_frame, textvariable=self.arb_points, width=15).grid(row=0, column=3, padx=5)
 
+        # Dual-tone parameters
+        ttk.Label(func_frame, text="Freq1:").grid(row=1, column=0, sticky="w")
+        self.dual_tone_f1 = tk.StringVar(value="1000")
+        ttk.Entry(func_frame, textvariable=self.dual_tone_f1, width=10).grid(row=1, column=1, padx=5)
+
+        self.dual_tone_f1_unit = tk.StringVar(value="HZ")
+        ttk.Combobox(func_frame, textvariable=self.dual_tone_f1_unit, width=5,
+                    values=["HZ", "KHZ", "MHZ"], state="readonly").grid(row=1, column=2, padx=2)
+
+        ttk.Label(func_frame, text="Freq2:").grid(row=1, column=3, sticky="w", padx=(10,0))
+        self.dual_tone_f2 = tk.StringVar(value="1100")
+        ttk.Entry(func_frame, textvariable=self.dual_tone_f2, width=10).grid(row=1, column=4, padx=5)
+
+        self.dual_tone_f2_unit = tk.StringVar(value="HZ")
+        ttk.Combobox(func_frame, textvariable=self.dual_tone_f2_unit, width=5,
+                    values=["HZ", "KHZ", "MHZ"], state="readonly").grid(row=1, column=5, padx=2)
+
         ttk.Button(func_frame, text="Generate and Load",
-                  command=self.generate_arb).grid(row=1, column=0, columnspan=4, pady=10)
+                  command=self.generate_arb).grid(row=2, column=0, columnspan=3, pady=10)
+
+        ttk.Button(func_frame, text="Use Native Dual-Tone",
+                  command=self.use_native_dualtone).grid(row=2, column=3, columnspan=3, pady=10, padx=(10,0))
 
         # === SAMPLE RATE ===
         srate_frame = ttk.LabelFrame(self.arb_frame, text="Sample Rate", padding=10)
         srate_frame.grid(row=3, column=0, sticky="ew", padx=10, pady=5)
 
-        ttk.Label(srate_frame, text="Sample Rate (Sa/s):").grid(row=0, column=0, sticky="w")
-        self.arb_srate = tk.StringVar(value="1e6")
-        ttk.Entry(srate_frame, textvariable=self.arb_srate, width=20).grid(row=0, column=1, padx=5)
+        ttk.Label(srate_frame, text="Sample Rate:").grid(row=0, column=0, sticky="w")
+        self.arb_srate = tk.StringVar(value="1")
+        ttk.Entry(srate_frame, textvariable=self.arb_srate, width=15).grid(row=0, column=1, padx=5)
+
+        self.arb_srate_unit = tk.StringVar(value="MHZ")
+        ttk.Combobox(srate_frame, textvariable=self.arb_srate_unit, width=8,
+                    values=["HZ", "KHZ", "MHZ"], state="readonly").grid(row=0, column=2, padx=2)
 
         ttk.Button(srate_frame, text="Apply",
-                  command=self.set_sample_rate).grid(row=0, column=2, padx=5)
+                  command=self.set_sample_rate).grid(row=0, column=3, padx=5)
 
         # === WAVEFORM MANAGEMENT ===
         manage_frame = ttk.LabelFrame(self.arb_frame, text="Waveform Management", padding=10)
@@ -494,6 +548,55 @@ class RigolDGGUI:
         self.arb_info = tk.Text(info_frame, height=8, width=70)
         self.arb_info.grid(row=0, column=0, padx=5, pady=5)
 
+    def setup_debug_controls(self):
+        """Create debug panel"""
+
+        # === DEBUG INFO ===
+        info_frame = ttk.LabelFrame(self.debug_frame, text="Debug Information", padding=10)
+        info_frame.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+
+        info_text = ttk.Label(info_frame, text=
+            "Enable 'Debug Mode' before connecting to see SCPI commands.\n"
+            "This panel shows all commands sent (TX) and responses received (RX).\n"
+            "Useful for troubleshooting I/O errors and communication issues.",
+            justify="left")
+        info_text.pack(anchor="w", pady=5)
+
+        # === DEBUG LOG ===
+        log_frame = ttk.LabelFrame(self.debug_frame, text="SCPI Command Log", padding=10)
+        log_frame.grid(row=1, column=0, sticky="nsew", padx=10, pady=5)
+
+        # Scrollable text area
+        text_frame = ttk.Frame(log_frame)
+        text_frame.pack(fill="both", expand=True)
+
+        scrollbar = ttk.Scrollbar(text_frame)
+        scrollbar.pack(side="right", fill="y")
+
+        self.debug_text = tk.Text(text_frame, height=25, width=90, font=("Courier", 9),
+                                  yscrollcommand=scrollbar.set)
+        self.debug_text.pack(side="left", fill="both", expand=True)
+        scrollbar.config(command=self.debug_text.yview)
+
+        # Buttons
+        btn_frame = ttk.Frame(log_frame)
+        btn_frame.pack(fill="x", pady=(10, 0))
+
+        ttk.Button(btn_frame, text="Refresh Log", command=self.refresh_debug_log).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Clear Log", command=self.clear_debug_log).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Auto-refresh", command=self.toggle_auto_refresh).pack(side="left", padx=5)
+
+        self.auto_refresh_label = ttk.Label(btn_frame, text="OFF", foreground="red")
+        self.auto_refresh_label.pack(side="left", padx=5)
+
+        # Configure grid weights
+        self.debug_frame.rowconfigure(1, weight=1)
+        self.debug_frame.columnconfigure(0, weight=1)
+
+        # Auto-refresh state
+        self.auto_refresh_active = False
+        self.auto_refresh_job = None
+
     # === CONNECTION METHODS ===
 
     def connect(self):
@@ -517,11 +620,14 @@ class RigolDGGUI:
         def do_connect():
             try:
                 # Connect directly with the specified address
-                self.gen = RigolDG(visa_addr)
+                debug_enabled = self.debug_mode.get()
+                self.gen = RigolDG(visa_addr, debug=debug_enabled)
 
                 self.connected = True
                 self.root.after(0, lambda: self.status_label.config(
                     text=f"Connected: {self.gen.identify()}", foreground="green"))
+                self.root.after(0, lambda: self.connect_btn.config(state="disabled"))
+                self.root.after(0, lambda: self.disconnect_btn.config(state="normal"))
                 self.root.after(0, lambda: messagebox.showinfo(
                     "Success", "Connected to generator"))
 
@@ -534,6 +640,35 @@ class RigolDGGUI:
 
         threading.Thread(target=do_connect, daemon=True).start()
 
+    def disconnect(self):
+        """Disconnect from the generator"""
+        if not self.connected or self.gen is None:
+            messagebox.showinfo("Info", "Not connected")
+            return
+
+        try:
+            # Stop auto-refresh if active
+            if self.auto_refresh_active:
+                self.auto_refresh_active = False
+                self.auto_refresh_label.config(text="OFF", foreground="red")
+                if self.auto_refresh_job:
+                    self.root.after_cancel(self.auto_refresh_job)
+                    self.auto_refresh_job = None
+
+            # Close connection
+            self.gen.close()
+            self.gen = None
+            self.connected = False
+
+            # Update UI
+            self.status_label.config(text="Not connected", foreground="red")
+            self.connect_btn.config(state="normal")
+            self.disconnect_btn.config(state="disabled")
+
+            messagebox.showinfo("Success", "Disconnected from generator")
+        except Exception as e:
+            messagebox.showerror("Error", f"Disconnect error:\n{str(e)}")
+
     def check_connection(self):
         """Check active connection"""
         if not self.connected or self.gen is None:
@@ -543,6 +678,32 @@ class RigolDGGUI:
 
     # === CHANNEL CONTROL METHODS ===
 
+    def update_function_and_params(self, channel):
+        """Update waveform and show/hide parameters based on function type"""
+        func = getattr(self, f"ch{channel}_func").get()
+
+        # Update function on device
+        self.update_function(channel)
+
+        # Show/hide Frequency 2 controls based on function type
+        freq2_label = getattr(self, f"ch{channel}_freq2_label")
+        freq2_entry = getattr(self, f"ch{channel}_freq2_entry")
+        freq2_unit_combo = getattr(self, f"ch{channel}_freq2_unit_combo")
+        freq2_apply = getattr(self, f"ch{channel}_freq2_apply")
+
+        if func == "DUAL":
+            # Show Freq2 controls
+            freq2_label.grid(row=0, column=4, sticky="w", padx=(20, 0))
+            freq2_entry.grid(row=0, column=5, padx=5)
+            freq2_unit_combo.grid(row=0, column=6, padx=2)
+            freq2_apply.grid(row=0, column=7, padx=5)
+        else:
+            # Hide Freq2 controls
+            freq2_label.grid_remove()
+            freq2_entry.grid_remove()
+            freq2_unit_combo.grid_remove()
+            freq2_apply.grid_remove()
+
     def update_function(self, channel):
         """Update waveform"""
         if not self.check_connection():
@@ -550,8 +711,57 @@ class RigolDGGUI:
 
         try:
             func = getattr(self, f"ch{channel}_func").get()
-            self.gen.set_function(channel, func)
-            messagebox.showinfo("OK", f"Channel {channel}: waveform → {func}")
+
+            # For DUAL, don't set the function yet - wait for Apply Dual-Tone button
+            if func == "DUAL":
+                messagebox.showinfo("Info", f"Channel {channel}: Ready for Dual-Tone\nSet both frequencies and click 'Apply Dual-Tone'")
+            else:
+                self.gen.set_function(channel, func)
+                messagebox.showinfo("OK", f"Channel {channel}: waveform → {func}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def set_dual_tone_params(self, channel):
+        """Set dual-tone with both frequencies"""
+        if not self.check_connection():
+            return
+
+        try:
+            # Get freq1
+            freq1_value = float(getattr(self, f"ch{channel}_freq").get())
+            freq1_unit = getattr(self, f"ch{channel}_freq_unit").get()
+            if freq1_unit == "KHZ":
+                freq1_value *= 1000
+            elif freq1_unit == "MHZ":
+                freq1_value *= 1000000
+
+            # Get freq2
+            freq2_value = float(getattr(self, f"ch{channel}_freq2").get())
+            freq2_unit = getattr(self, f"ch{channel}_freq2_unit").get()
+            if freq2_unit == "KHZ":
+                freq2_value *= 1000
+            elif freq2_unit == "MHZ":
+                freq2_value *= 1000000
+
+            # Get amplitude
+            ampl = float(getattr(self, f"ch{channel}_ampl").get())
+
+            # Apply dual-tone
+            self.gen.set_dual_tone(channel, freq1_value, freq2_value, ampl)
+
+            # Format for display
+            def format_freq(freq):
+                if freq >= 1000000:
+                    return f"{freq/1000000:.3f} MHz"
+                elif freq >= 1000:
+                    return f"{freq/1000:.3f} kHz"
+                else:
+                    return f"{freq:.1f} Hz"
+
+            messagebox.showinfo("OK",
+                f"Channel {channel}: Dual-Tone activated\n"
+                f"F1: {format_freq(freq1_value)}\n"
+                f"F2: {format_freq(freq2_value)}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -849,14 +1059,22 @@ class RigolDGGUI:
 
             num_points = self.gen.load_arb_from_csv(channel, filename, name, normalize)
 
+            # Note: waveform is automatically activated by create_arb_waveform
+
             self.arb_info.delete(1.0, tk.END)
             self.arb_info.insert(tk.END, f"File loaded: {filename}\n")
             self.arb_info.insert(tk.END, f"Points loaded: {num_points}\n")
             self.arb_info.insert(tk.END, f"Name: {name}\n")
             self.arb_info.insert(tk.END, f"Normalized: {'Yes' if normalize else 'No'}\n")
-            self.arb_info.insert(tk.END, f"\nUse 'Load ARB' to activate the waveform")
+            self.arb_info.insert(tk.END, f"Channel: {channel}\n")
+            self.arb_info.insert(tk.END, f"\n✓ Waveform saved to instrument memory!\n")
+            self.arb_info.insert(tk.END, f"\nTo use it:\n")
+            self.arb_info.insert(tk.END, f"1. On the generator, press 'Waveforms' button\n")
+            self.arb_info.insert(tk.END, f"2. Select 'Arb' category\n")
+            self.arb_info.insert(tk.END, f"3. Choose '{name}' from the list\n")
+            self.arb_info.insert(tk.END, f"4. Enable output on Channel {channel}")
 
-            messagebox.showinfo("OK", f"Loaded {num_points} points from CSV")
+            messagebox.showinfo("OK", f"Loaded and activated {num_points} points on channel {channel}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -896,11 +1114,24 @@ class RigolDGGUI:
             num_points = self.gen.load_arb_from_csv(channel, temp_csv.name, name, normalize=False)
 
             # Set suggested sample rate
-            self.arb_srate.set(f"{info['suggested_sample_rate']:.0f}")
-            self.gen.set_arb_sample_rate(channel, info['suggested_sample_rate'])
+            suggested_rate = info['suggested_sample_rate']
+            self.gen.set_arb_sample_rate(channel, suggested_rate)
+
+            # Update UI with appropriate unit
+            if suggested_rate >= 1000000:
+                self.arb_srate.set(f"{suggested_rate/1000000:.3f}")
+                self.arb_srate_unit.set("MHZ")
+            elif suggested_rate >= 1000:
+                self.arb_srate.set(f"{suggested_rate/1000:.3f}")
+                self.arb_srate_unit.set("KHZ")
+            else:
+                self.arb_srate.set(f"{suggested_rate:.0f}")
+                self.arb_srate_unit.set("HZ")
 
             # Clean up temp file
             os.unlink(temp_csv.name)
+
+            # Note: waveform is automatically activated by create_arb_waveform
 
             # Update info
             self.arb_info.delete(1.0, tk.END)
@@ -912,11 +1143,66 @@ class RigolDGGUI:
             self.arb_info.insert(tk.END, f"Generator sample rate: {info['suggested_sample_rate']:.0f} Sa/s\n")
             self.arb_info.insert(tk.END, f"Downsampled: {'Yes' if info['downsampled'] else 'No'}\n")
             self.arb_info.insert(tk.END, f"Name: {name}\n")
-            self.arb_info.insert(tk.END, f"\nUse 'Load ARB' to activate the waveform")
+            self.arb_info.insert(tk.END, f"Channel: {channel}\n")
+            self.arb_info.insert(tk.END, f"\n✓ Waveform saved to instrument memory!\n")
+            self.arb_info.insert(tk.END, f"\nTo use it:\n")
+            self.arb_info.insert(tk.END, f"1. On the generator, press 'Waveforms' button\n")
+            self.arb_info.insert(tk.END, f"2. Select 'Arb' category\n")
+            self.arb_info.insert(tk.END, f"3. Choose '{name}' from the list\n")
+            self.arb_info.insert(tk.END, f"4. Enable output on Channel {channel}")
 
             messagebox.showinfo("OK",
-                f"Loaded {num_points} points from WAV\n"
+                f"Loaded and activated {num_points} points on channel {channel}\n"
                 f"Sample rate set to {info['suggested_sample_rate']:.0f} Sa/s")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
+
+    def use_native_dualtone(self):
+        """Use the built-in dual-tone (harmonic) function"""
+        if not self.check_connection():
+            return
+
+        try:
+            channel = int(self.arb_channel.get())
+
+            # Get frequencies with units
+            f1 = float(self.dual_tone_f1.get())
+            f1_unit = self.dual_tone_f1_unit.get()
+            if f1_unit == "KHZ":
+                f1 *= 1000
+            elif f1_unit == "MHZ":
+                f1 *= 1000000
+
+            f2 = float(self.dual_tone_f2.get())
+            f2_unit = self.dual_tone_f2_unit.get()
+            if f2_unit == "KHZ":
+                f2 *= 1000
+            elif f2_unit == "MHZ":
+                f2 *= 1000000
+
+            # Use built-in dual-tone function
+            self.gen.set_dual_tone(channel, f1, f2, amplitude=2.0)
+
+            # Format frequencies for display
+            def format_freq(freq):
+                if freq >= 1000000:
+                    return f"{freq/1000000:.3f} MHz"
+                elif freq >= 1000:
+                    return f"{freq/1000:.3f} kHz"
+                else:
+                    return f"{freq:.1f} Hz"
+
+            self.arb_info.delete(1.0, tk.END)
+            self.arb_info.insert(tk.END, f"✓ Native Dual-Tone Activated!\n\n")
+            self.arb_info.insert(tk.END, f"Channel: {channel}\n")
+            self.arb_info.insert(tk.END, f"Frequency 1: {format_freq(f1)}\n")
+            self.arb_info.insert(tk.END, f"Frequency 2: {format_freq(f2)}\n")
+            self.arb_info.insert(tk.END, f"Amplitude: 2.0 Vpp\n")
+            self.arb_info.insert(tk.END, f"\nThe generator is now using its built-in\n")
+            self.arb_info.insert(tk.END, f"harmonic/dual-tone function.\n")
+            self.arb_info.insert(tk.END, f"\nRemember to enable output on Channel {channel}!")
+
+            messagebox.showinfo("OK", f"Native dual-tone activated on channel {channel}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -931,32 +1217,110 @@ class RigolDGGUI:
             arb_type = self.arb_type.get()
             points = int(self.arb_points.get())
 
-            # Generate data
-            t = np.linspace(-np.pi, np.pi, points)
+            if arb_type == "dual-tone":
+                # Dual-tone: sum of two sinusoids
+                f1 = float(self.dual_tone_f1.get())
+                f1_unit = self.dual_tone_f1_unit.get()
+                if f1_unit == "KHZ":
+                    f1 *= 1000
+                elif f1_unit == "MHZ":
+                    f1 *= 1000000
 
-            if arb_type == "sinc":
-                data = np.sinc(t)
-            elif arb_type == "gauss":
-                data = np.exp(-t**2 / 2)
-            elif arb_type == "exponential":
-                data = np.exp(-abs(t))
-            elif arb_type == "chirp":
-                data = np.sin(t**2)
+                f2 = float(self.dual_tone_f2.get())
+                f2_unit = self.dual_tone_f2_unit.get()
+                if f2_unit == "KHZ":
+                    f2 *= 1000
+                elif f2_unit == "MHZ":
+                    f2 *= 1000000
+
+                # Calculate appropriate sample rate (at least 10x highest frequency)
+                max_freq = max(f1, f2)
+                sample_rate = max_freq * 10
+
+                # Generate time vector for 1 period of the beat frequency
+                beat_freq = abs(f2 - f1)
+                if beat_freq > 0:
+                    duration = 1.0 / beat_freq  # One beat period
+                else:
+                    duration = 1.0 / max_freq  # One period of the signal
+
+                # Ensure we have enough points for good resolution
+                sample_rate = max(sample_rate, points / duration)
+
+                # Generate time vector
+                t = np.linspace(0, duration, points, endpoint=False)
+
+                # Generate dual-tone signal
+                data = np.sin(2*np.pi*f1*t) + np.sin(2*np.pi*f2*t)
+
+                # Set sample rate on the generator
+                self.gen.set_arb_sample_rate(channel, sample_rate)
+
+                # Update UI with appropriate unit
+                if sample_rate >= 1000000:
+                    self.arb_srate.set(f"{sample_rate/1000000:.3f}")
+                    self.arb_srate_unit.set("MHZ")
+                elif sample_rate >= 1000:
+                    self.arb_srate.set(f"{sample_rate/1000:.3f}")
+                    self.arb_srate_unit.set("KHZ")
+                else:
+                    self.arb_srate.set(f"{sample_rate:.0f}")
+                    self.arb_srate_unit.set("HZ")
+
+                # Format frequencies for display
+                def format_freq(freq):
+                    if freq >= 1000000:
+                        return f"{freq/1000000:.3f} MHz"
+                    elif freq >= 1000:
+                        return f"{freq/1000:.3f} kHz"
+                    else:
+                        return f"{freq:.1f} Hz"
+
+                info_text = f"Waveform generated: dual-tone\n"
+                info_text += f"Freq1: {format_freq(f1)}\n"
+                info_text += f"Freq2: {format_freq(f2)}\n"
+                info_text += f"Beat freq: {beat_freq} Hz\n"
+                info_text += f"Points: {points}\n"
+                info_text += f"Sample rate: {sample_rate:.0f} Sa/s\n"
+                info_text += f"Duration: {duration*1000:.3f} ms\n"
+                info_text += f"Name: {name}\n"
             else:
-                raise ValueError(f"Unknown type: {arb_type}")
+                # Generate data for other waveforms
+                t = np.linspace(-np.pi, np.pi, points)
+
+                if arb_type == "sinc":
+                    data = np.sinc(t)
+                elif arb_type == "gauss":
+                    data = np.exp(-t**2 / 2)
+                elif arb_type == "exponential":
+                    data = np.exp(-abs(t))
+                elif arb_type == "chirp":
+                    data = np.sin(t**2)
+                else:
+                    raise ValueError(f"Unknown type: {arb_type}")
+
+                info_text = f"Waveform generated: {arb_type}\n"
+                info_text += f"Points: {points}\n"
+                info_text += f"Name: {name}\n"
 
             # Normalize
             data = data / np.max(np.abs(data))
 
             self.gen.create_arb_waveform(channel, data.tolist(), name)
 
-            self.arb_info.delete(1.0, tk.END)
-            self.arb_info.insert(tk.END, f"Waveform generated: {arb_type}\n")
-            self.arb_info.insert(tk.END, f"Points: {points}\n")
-            self.arb_info.insert(tk.END, f"Name: {name}\n")
-            self.arb_info.insert(tk.END, f"\nUse 'Load ARB' to activate the waveform")
+            # Note: waveform is automatically activated by create_arb_waveform
 
-            messagebox.showinfo("OK", f"Waveform '{arb_type}' generated ({points} points)")
+            self.arb_info.delete(1.0, tk.END)
+            self.arb_info.insert(tk.END, info_text)
+            self.arb_info.insert(tk.END, f"Channel: {channel}\n")
+            self.arb_info.insert(tk.END, f"\n✓ Waveform saved to instrument memory!\n")
+            self.arb_info.insert(tk.END, f"\nTo use it:\n")
+            self.arb_info.insert(tk.END, f"1. On the generator, press 'Waveforms' button\n")
+            self.arb_info.insert(tk.END, f"2. Select 'Arb' category\n")
+            self.arb_info.insert(tk.END, f"3. Choose '{name}' from the list\n")
+            self.arb_info.insert(tk.END, f"4. Enable output on Channel {channel}")
+
+            messagebox.showinfo("OK", f"Waveform '{arb_type}' generated and activated on channel {channel}")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -968,8 +1332,20 @@ class RigolDGGUI:
         try:
             channel = int(self.arb_channel.get())
             rate = float(eval(self.arb_srate.get()))  # Allows scientific notation
+            rate_unit = self.arb_srate_unit.get()
+
+            # Convert to Hz
+            if rate_unit == "KHZ":
+                rate *= 1000
+            elif rate_unit == "MHZ":
+                rate *= 1000000
+
             self.gen.set_arb_sample_rate(channel, rate)
-            messagebox.showinfo("OK", f"Sample rate → {rate} Sa/s")
+
+            # Format display
+            unit_str = {"HZ": "Hz", "KHZ": "kHz", "MHZ": "MHz"}[rate_unit]
+            rate_display = float(self.arb_srate.get())
+            messagebox.showinfo("OK", f"Sample rate → {rate_display} {unit_str} ({rate} Sa/s)")
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
@@ -1027,6 +1403,76 @@ class RigolDGGUI:
                 messagebox.showinfo("OK", f"Waveform '{name}' deleted")
         except Exception as e:
             messagebox.showerror("Error", str(e))
+
+    # === DEBUG METHODS ===
+
+    def refresh_debug_log(self):
+        """Refresh debug log from generator"""
+        if not self.connected or self.gen is None:
+            self.debug_text.delete(1.0, tk.END)
+            self.debug_text.insert(tk.END, "Not connected. Enable 'Debug Mode' before connecting.\n")
+            return
+
+        if not self.gen.debug:
+            self.debug_text.delete(1.0, tk.END)
+            self.debug_text.insert(tk.END, "Debug mode is not enabled.\n")
+            self.debug_text.insert(tk.END, "Disconnect and reconnect with 'Debug Mode' enabled.\n")
+            return
+
+        try:
+            log_entries = self.gen.get_debug_log()
+            self.debug_text.delete(1.0, tk.END)
+
+            if not log_entries:
+                self.debug_text.insert(tk.END, "No debug messages yet.\n")
+            else:
+                for entry in log_entries:
+                    # Color code errors
+                    if "ERROR" in entry:
+                        self.debug_text.insert(tk.END, entry + "\n", "error")
+                    elif "TX:" in entry:
+                        self.debug_text.insert(tk.END, entry + "\n", "tx")
+                    elif "RX:" in entry:
+                        self.debug_text.insert(tk.END, entry + "\n", "rx")
+                    else:
+                        self.debug_text.insert(tk.END, entry + "\n")
+
+            # Configure tags for colors
+            self.debug_text.tag_config("error", foreground="red")
+            self.debug_text.tag_config("tx", foreground="blue")
+            self.debug_text.tag_config("rx", foreground="green")
+
+            # Auto-scroll to bottom
+            self.debug_text.see(tk.END)
+        except Exception as e:
+            self.debug_text.delete(1.0, tk.END)
+            self.debug_text.insert(tk.END, f"Error refreshing log: {str(e)}\n")
+
+    def clear_debug_log(self):
+        """Clear debug log"""
+        if self.connected and self.gen is not None and self.gen.debug:
+            self.gen.clear_debug_log()
+        self.debug_text.delete(1.0, tk.END)
+        self.debug_text.insert(tk.END, "Log cleared.\n")
+
+    def toggle_auto_refresh(self):
+        """Toggle auto-refresh of debug log"""
+        self.auto_refresh_active = not self.auto_refresh_active
+
+        if self.auto_refresh_active:
+            self.auto_refresh_label.config(text="ON", foreground="green")
+            self.auto_refresh_debug()
+        else:
+            self.auto_refresh_label.config(text="OFF", foreground="red")
+            if self.auto_refresh_job:
+                self.root.after_cancel(self.auto_refresh_job)
+                self.auto_refresh_job = None
+
+    def auto_refresh_debug(self):
+        """Auto-refresh debug log every second"""
+        if self.auto_refresh_active:
+            self.refresh_debug_log()
+            self.auto_refresh_job = self.root.after(1000, self.auto_refresh_debug)
 
 
 def main():
